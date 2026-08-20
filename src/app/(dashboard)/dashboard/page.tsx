@@ -1,0 +1,265 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import Link from 'next/link';
+import {
+  Users, Clock, TrendingUp, AlertCircle, CheckCircle2,
+  Calendar, ArrowRight, MapPin, Timer
+} from 'lucide-react';
+import { cn, formatDate, formatTime, getStatusBadgeColor, getStatusLabel } from '@/lib/utils';
+import type { Attendance } from '@/types';
+
+interface DashboardStats {
+  totalEmployees: number;
+  presentToday: number;
+  lateToday: number;
+  absentToday: number;
+  onLeaveToday: number;
+  overtimeToday: number;
+  outOfRadiusToday: number;
+  pendingCorrections: number;
+  todayAttendances: Attendance[];
+}
+
+interface UserProfile {
+  role: string;
+  name: string;
+}
+
+export default function DashboardPage() {
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [myAttendance, setMyAttendance] = useState<Attendance | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function load() {
+      const [meRes, statsRes, attRes] = await Promise.all([
+        fetch('/api/auth/me'),
+        fetch('/api/dashboard'),
+        fetch(`/api/attendances?date=${new Date().toISOString().split('T')[0]}&userId=me`),
+      ]);
+      const meData = await meRes.json();
+      if (meData.success) setProfile(meData.data);
+
+      if (statsRes.ok) {
+        const s = await statsRes.json();
+        if (s.success) setStats(s.data);
+      }
+
+      // Get my own attendance
+      const myRes = await fetch(`/api/attendances?date=${new Date().toISOString().split('T')[0]}`);
+      const myData = await myRes.json();
+      if (myData.success && myData.data.length > 0) {
+        const me = await fetch('/api/auth/me');
+        const meD = await me.json();
+        if (meD.success) {
+          const mine = myData.data.find((a: Attendance) => a.userId === meD.data.id);
+          if (mine) setMyAttendance(mine);
+        }
+      }
+      setLoading(false);
+    }
+    load();
+  }, []);
+
+  const isManager = profile?.role === 'ADMIN' || profile?.role === 'MANAGER' || profile?.role === 'SPV';
+
+  if (loading) {
+    return (
+      <div className="space-y-4 animate-pulse">
+        <div className="h-8 bg-gray-200 rounded-xl w-48" />
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {[...Array(4)].map((_, i) => <div key={i} className="h-28 bg-gray-200 rounded-2xl" />)}
+        </div>
+        <div className="h-64 bg-gray-200 rounded-2xl" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6 max-w-6xl mx-auto">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="page-title">Dashboard</h1>
+          <p className="text-slate-500 text-sm capitalize mt-0.5">
+            {formatDate(new Date(), 'EEEE, dd MMMM yyyy')}
+          </p>
+        </div>
+        <Link href="/attendance" className="btn-primary btn-sm hidden md:flex">
+          <Clock size={14} />
+          Absen Sekarang
+        </Link>
+      </div>
+
+      {/* My attendance card - for regular users */}
+      {myAttendance ? (
+        <div className="card bg-gradient-to-r from-brand-500 to-brand-600 text-white border-0">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-brand-100 text-sm font-medium">Status Hari Ini</p>
+              <p className="text-2xl font-bold mt-1">
+                {myAttendance.checkOut ? 'Sudah Pulang' : myAttendance.checkIn ? 'Sedang Bekerja' : 'Belum Absen'}
+              </p>
+            </div>
+            <div className="text-right">
+              {myAttendance.checkIn && (
+                <div>
+                  <p className="text-brand-100 text-xs">Masuk</p>
+                  <p className="text-xl font-bold">{formatTime(myAttendance.checkIn)}</p>
+                </div>
+              )}
+            </div>
+          </div>
+          {(myAttendance.isLate || myAttendance.isOvertime || myAttendance.isOutOfRadius) && (
+            <div className="flex gap-2 mt-3 flex-wrap">
+              {myAttendance.isLate && (
+                <span className="bg-white/20 text-white text-xs px-2 py-1 rounded-lg">
+                  Terlambat {myAttendance.lateMinutes} mnt
+                </span>
+              )}
+              {myAttendance.isOvertime && (
+                <span className="bg-white/20 text-white text-xs px-2 py-1 rounded-lg">
+                  Lembur {myAttendance.overtimeMinutes} mnt
+                </span>
+              )}
+              {myAttendance.isOutOfRadius && (
+                <span className="bg-yellow-400/30 text-white text-xs px-2 py-1 rounded-lg">
+                  Di luar radius
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      ) : (
+        <Link href="/attendance" className="block">
+          <div className="card bg-gradient-to-r from-brand-500 to-brand-600 text-white border-0 hover:shadow-lg transition-shadow cursor-pointer">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-brand-100 text-sm font-medium">Absensi Hari Ini</p>
+                <p className="text-2xl font-bold mt-1">Belum Absen Masuk</p>
+                <p className="text-brand-200 text-sm mt-1">Tap untuk absen sekarang</p>
+              </div>
+              <div className="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center">
+                <Clock size={28} className="text-white" />
+              </div>
+            </div>
+          </div>
+        </Link>
+      )}
+
+      {/* Stats - Manager/Admin only */}
+      {isManager && stats && (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
+            <StatCard
+              label="Total Karyawan"
+              value={stats.totalEmployees}
+              icon={Users}
+              color="text-blue-500 bg-blue-50"
+            />
+            <StatCard
+              label="Hadir Hari Ini"
+              value={stats.presentToday}
+              icon={CheckCircle2}
+              color="text-green-500 bg-green-50"
+            />
+            <StatCard
+              label="Terlambat"
+              value={stats.lateToday}
+              icon={AlertCircle}
+              color="text-yellow-500 bg-yellow-50"
+            />
+            <StatCard
+              label="Tidak Hadir"
+              value={stats.absentToday}
+              icon={Timer}
+              color="text-red-500 bg-red-50"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <StatCard label="Lembur" value={stats.overtimeToday} icon={TrendingUp} color="text-purple-500 bg-purple-50" />
+            <StatCard label="Diluar Radius" value={stats.outOfRadiusToday} icon={MapPin} color="text-orange-500 bg-orange-50" />
+            <StatCard label="Koreksi Pending" value={stats.pendingCorrections} icon={Calendar} color="text-cyan-500 bg-cyan-50" />
+          </div>
+
+          {/* Today attendance list */}
+          <div className="card">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="section-title">Kehadiran Hari Ini</h2>
+              <Link href="/team" className="text-sm text-brand-500 font-semibold flex items-center gap-1 hover:text-brand-600">
+                Lihat semua <ArrowRight size={14} />
+              </Link>
+            </div>
+            <div className="space-y-2">
+              {stats.todayAttendances.slice(0, 8).map((a) => (
+                <div key={a.id} className="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-50 transition-colors">
+                  <div className="w-9 h-9 rounded-full bg-gradient-to-br from-slate-200 to-slate-300 flex items-center justify-center text-slate-600 font-bold text-sm flex-shrink-0">
+                    {a.user?.name?.charAt(0).toUpperCase() || '?'}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-slate-800 truncate">{a.user?.name}</p>
+                    <p className="text-xs text-slate-500">{a.user?.department}</p>
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <p className="text-sm font-semibold text-slate-800">
+                      {a.checkIn ? formatTime(a.checkIn) : '-'}
+                    </p>
+                    <span className={cn('badge text-xs', getStatusBadgeColor(a.status))}>
+                      {getStatusLabel(a.status)}
+                    </span>
+                  </div>
+                </div>
+              ))}
+              {stats.todayAttendances.length === 0 && (
+                <p className="text-slate-400 text-sm text-center py-8">Belum ada data absensi hari ini.</p>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Quick links for regular users */}
+      {!isManager && (
+        <div className="grid grid-cols-2 gap-3">
+          <Link href="/attendance" className="card-hover flex flex-col items-center gap-3 text-center p-6">
+            <div className="w-12 h-12 rounded-2xl bg-brand-50 flex items-center justify-center">
+              <Clock size={22} className="text-brand-500" />
+            </div>
+            <div>
+              <p className="font-semibold text-slate-800">Absen</p>
+              <p className="text-xs text-slate-500">Masuk & Pulang</p>
+            </div>
+          </Link>
+          <Link href="/attendance?tab=history" className="card-hover flex flex-col items-center gap-3 text-center p-6">
+            <div className="w-12 h-12 rounded-2xl bg-green-50 flex items-center justify-center">
+              <Calendar size={22} className="text-green-500" />
+            </div>
+            <div>
+              <p className="font-semibold text-slate-800">Riwayat</p>
+              <p className="text-xs text-slate-500">Histori Absensi</p>
+            </div>
+          </Link>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StatCard({
+  label, value, icon: Icon, color,
+}: {
+  label: string; value: number; icon: React.ElementType; color: string;
+}) {
+  return (
+    <div className="stat-card">
+      <div className={cn('w-9 h-9 rounded-xl flex items-center justify-center mb-2', color)}>
+        <Icon size={18} />
+      </div>
+      <p className="text-2xl font-bold text-slate-900">{value}</p>
+      <p className="text-xs text-slate-500 font-medium">{label}</p>
+    </div>
+  );
+}

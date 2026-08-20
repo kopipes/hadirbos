@@ -1,0 +1,152 @@
+// This is your Prisma schema file
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Role: ADMIN | MANAGER | SPV | USER
+// AttendanceStatus: PRESENT | ABSENT | LEAVE | HOLIDAY | OFF
+// CorrectionStatus: PENDING | APPROVED | REJECTED
+// NotificationType: LATE_CHECKIN | OUT_OF_RADIUS | OVERTIME | MISSING_CHECKOUT | CORRECTION_REQUEST | CORRECTION_APPROVED | CORRECTION_REJECTED | SYSTEM
+
+model User {
+  id         String   @id @default(cuid())
+  nik        String   @unique
+  name       String
+  email      String?  @unique
+  phone      String?
+  address    String?
+  position   String?
+  department String?
+  role       String   @default("USER")
+  password   String
+  avatar     String?
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  managerId    String?
+  manager      User?   @relation("UserManager", fields: [managerId], references: [id])
+  subordinates User[]  @relation("UserManager")
+
+  officeId String?
+  office   Office? @relation(fields: [officeId], references: [id])
+
+  workScheduleId String?
+  workSchedule   WorkSchedule? @relation(fields: [workScheduleId], references: [id])
+
+  attendances           Attendance[]
+  notificationsReceived Notification[]       @relation("NotificationRecipient")
+  notificationsSent     Notification[]       @relation("NotificationSender")
+  corrections           AttendanceCorrection[] @relation("CorrectionBy")
+  correctionRequests    AttendanceCorrection[] @relation("CorrectionFor")
+}
+
+model Office {
+  id        String   @id @default(cuid())
+  name      String
+  address   String?
+  latitude  Float
+  longitude Float
+  radius    Int      @default(100)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users         User[]
+  workSchedules WorkSchedule[]
+}
+
+model WorkSchedule {
+  id            String   @id @default(cuid())
+  name          String
+  checkInTime   String   // "HH:mm"
+  checkOutTime  String   // "HH:mm"
+  gracePeriod   Int      @default(15)
+  overtimeAfter Int      @default(30)
+  workDays      String   @default("1,2,3,4,5")
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  officeId String?
+  office   Office? @relation(fields: [officeId], references: [id])
+
+  users User[]
+}
+
+model Attendance {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id])
+  date            String   // "YYYY-MM-DD"
+  checkIn         DateTime?
+  checkOut        DateTime?
+  checkInPhoto    String?
+  checkOutPhoto   String?
+  checkInLat      Float?
+  checkInLng      Float?
+  checkOutLat     Float?
+  checkOutLng     Float?
+  checkInAddress  String?
+  checkOutAddress String?
+  isLate          Boolean  @default(false)
+  lateMinutes     Int      @default(0)
+  isOvertime      Boolean  @default(false)
+  overtimeMinutes Int      @default(0)
+  isOutOfRadius   Boolean  @default(false)
+  status          String   @default("PRESENT")
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  corrections AttendanceCorrection[]
+
+  @@unique([userId, date])
+}
+
+model AttendanceCorrection {
+  id            String     @id @default(cuid())
+  attendanceId  String
+  attendance    Attendance @relation(fields: [attendanceId], references: [id])
+  requestedById String
+  requestedBy   User       @relation("CorrectionFor", fields: [requestedById], references: [id])
+  approvedById  String?
+  approvedBy    User?      @relation("CorrectionBy", fields: [approvedById], references: [id])
+  oldCheckIn    DateTime?
+  newCheckIn    DateTime?
+  oldCheckOut   DateTime?
+  newCheckOut   DateTime?
+  reason        String
+  status        String     @default("PENDING")
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+}
+
+model Holiday {
+  id         String   @id @default(cuid())
+  name       String
+  date       String   // "YYYY-MM-DD"
+  isNational Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model Notification {
+  id          String   @id @default(cuid())
+  type        String
+  title       String
+  message     String
+  recipientId String
+  recipient   User     @relation("NotificationRecipient", fields: [recipientId], references: [id])
+  senderId    String?
+  sender      User?    @relation("NotificationSender", fields: [senderId], references: [id])
+  isRead      Boolean  @default(false)
+  metadata    String?
+  createdAt   DateTime @default(now())
+}
