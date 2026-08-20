@@ -28,6 +28,8 @@ export default function AdminUsersPage() {
   const [editing, setEditing] = useState<UserProfile | null>(null);
   const [form, setForm] = useState<UserForm>(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<UserProfile | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   async function load() {
     const [uRes, oRes, sRes] = await Promise.all([
@@ -106,6 +108,21 @@ export default function AdminUsersPage() {
     }
   }
 
+  async function handleDelete() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    const res = await fetch(`/api/users/${deleteTarget.id}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (data.success) {
+      toast.success(`${deleteTarget.name} berhasil dihapus.`);
+      setDeleteTarget(null);
+      await load();
+    } else {
+      toast.error(data.error || 'Gagal menghapus.');
+    }
+    setDeleting(false);
+  }
+
   const filtered = users.filter((u) =>
     !search ||
     u.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -176,11 +193,14 @@ export default function AdminUsersPage() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1">
-                        <button onClick={() => openEdit(u)} className="btn-ghost btn-sm p-1.5">
+                        <button onClick={() => openEdit(u)} className="btn-ghost btn-sm p-1.5" title="Edit">
                           <Edit2 size={14} />
                         </button>
-                        <button onClick={() => handleToggle(u)} className="btn-ghost btn-sm p-1.5">
+                        <button onClick={() => handleToggle(u)} className="btn-ghost btn-sm p-1.5" title={u.isActive ? 'Nonaktifkan' : 'Aktifkan'}>
                           {u.isActive ? <ToggleRight size={16} className="text-green-500" /> : <ToggleLeft size={16} className="text-gray-400" />}
+                        </button>
+                        <button onClick={() => setDeleteTarget(u)} className="btn-ghost btn-sm p-1.5 text-red-400 hover:text-red-600 hover:bg-red-50" title="Hapus">
+                          <Trash2 size={14} />
                         </button>
                       </div>
                     </td>
@@ -281,6 +301,40 @@ export default function AdminUsersPage() {
                 <button onClick={() => setShowModal(false)} className="btn-secondary flex-1">Batal</button>
                 <button onClick={handleSave} disabled={saving} className="btn-primary flex-1">
                   <Save size={15} /> {saving ? 'Menyimpan...' : 'Simpan'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Delete confirmation modal */}
+      {deleteTarget && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm animate-slide-up">
+            <div className="p-6">
+              <div className="w-12 h-12 rounded-2xl bg-red-50 flex items-center justify-center mx-auto mb-4">
+                <Trash2 size={22} className="text-red-500" />
+              </div>
+              <h2 className="text-lg font-bold text-slate-900 text-center">Hapus Karyawan?</h2>
+              <p className="text-slate-500 text-sm text-center mt-2">
+                Anda akan menghapus <strong className="text-slate-800">{deleteTarget.name}</strong> (NIK: {deleteTarget.nik}).
+                Tindakan ini tidak dapat dibatalkan.
+              </p>
+              <div className="flex gap-3 mt-6">
+                <button
+                  onClick={() => setDeleteTarget(null)}
+                  className="btn-secondary flex-1"
+                  disabled={deleting}
+                >
+                  Batal
+                </button>
+                <button
+                  onClick={handleDelete}
+                  disabled={deleting}
+                  className="btn-danger flex-1"
+                >
+                  <Trash2 size={15} />
+                  {deleting ? 'Menghapus...' : 'Hapus'}
                 </button>
               </div>
             </div>

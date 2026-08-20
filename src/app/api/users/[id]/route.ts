@@ -76,13 +76,26 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   const authUser = await getAuthUser(req);
   if (!authUser) return unauthorized();
   if (authUser.role !== 'ADMIN') return forbidden();
+  if (authUser.userId === params.id) {
+    return badRequest('Tidak dapat menghapus akun Anda sendiri.');
+  }
 
   try {
-    await prisma.user.update({
-      where: { id: params.id },
-      data: { isActive: false },
+    // Remove related records first to avoid FK constraint errors
+    await prisma.notification.deleteMany({
+      where: { OR: [{ recipientId: params.id }, { senderId: params.id }] },
     });
-    return ok(null, 'Karyawan berhasil dinonaktifkan.');
+    await prisma.attendanceCorrection.deleteMany({
+      where: { OR: [{ requestedById: params.id }, { approvedById: params.id }] },
+    });
+    await prisma.attendance.deleteMany({ where: { userId: params.id } });
+    // Unlink subordinates so they don't become orphaned
+    await prisma.user.updateMany({
+      where: { managerId: params.id },
+      data: { managerId: null },
+    });
+    await prisma.user.delete({ where: { id: params.id } });
+    return ok(null, 'Karyawan berhasil dihapus.');
   } catch (error) {
     console.error('[DELETE USER]', error);
     return serverError();
