@@ -1,26 +1,44 @@
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { getAuthUser, ok, unauthorized, forbidden, serverError } from '@/lib/api';
+import { getAuthUser, ok, unauthorized, forbidden, badRequest, serverError } from '@/lib/api';
 import * as XLSX from 'xlsx';
+
+const VALID_STATUSES = ['PRESENT', 'ABSENT', 'LEAVE', 'HOLIDAY', 'OFF'];
 
 export async function GET(req: NextRequest) {
   const authUser = await getAuthUser(req);
   if (!authUser) return unauthorized();
   if (!['ADMIN', 'MANAGER', 'SPV'].includes(authUser.role)) return forbidden();
 
-  const { searchParams } = new URL(req.url);
-  const startDate = searchParams.get('startDate') || '';
-  const endDate = searchParams.get('endDate') || '';
-  const department = searchParams.get('department') || '';
-  const userId = searchParams.get('userId') || '';
-  const format = searchParams.get('format') || 'json';
-
   try {
+    const { searchParams } = new URL(req.url);
+    const startDate = searchParams.get('startDate') || '';
+    const endDate = searchParams.get('endDate') || '';
+    const department = searchParams.get('department') || '';
+    const userId = searchParams.get('userId') || '';
+    const format = searchParams.get('format') || 'json';
+    const status = searchParams.get('status') || '';
+
+    // Validate format
+    if (!['json', 'xlsx'].includes(format)) return badRequest('Format tidak valid.');
+
+    // Validate date formats
+    if (startDate && !/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
+      return badRequest('Format startDate tidak valid.');
+    }
+    if (endDate && !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
+      return badRequest('Format endDate tidak valid.');
+    }
+    if (status && !VALID_STATUSES.includes(status)) {
+      return badRequest('Status tidak valid.');
+    }
+
     const attendances = await prisma.attendance.findMany({
       where: {
         ...(startDate && endDate ? { date: { gte: startDate, lte: endDate } } : {}),
         ...(userId ? { userId } : {}),
         ...(department ? { user: { department } } : {}),
+        ...(status ? { status } : {}),
         ...(authUser.role !== 'ADMIN' ? { user: { managerId: authUser.userId } } : {}),
       },
       include: {
@@ -44,6 +62,7 @@ export async function GET(req: NextRequest) {
         Terlambat: a.isLate ? 'Ya' : 'Tidak',
         'Menit Terlambat': a.lateMinutes,
         Lembur: a.isOvertime ? 'Ya' : 'Tidak',
+        'Status Lembur': a.overtimeStatus,
         'Menit Lembur': a.overtimeMinutes,
         'Di Luar Radius': a.isOutOfRadius ? 'Ya' : 'Tidak',
         'Lokasi Masuk': a.checkInAddress || '',
@@ -54,24 +73,28 @@ export async function GET(req: NextRequest) {
       const wb = XLSX.utils.book_new();
       const ws = XLSX.utils.json_to_sheet(rows);
       XLSX.utils.book_append_sheet(wb, ws, 'Laporan Absensi');
-
       const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+      // Sanitize filename
+      const safeStart = startDate.replace(/[^0-9-]/g, '') || 'all';
+      const safeEnd = endDate.replace(/[^0-9-]/g, '') || 'all';
+
       return new Response(buf, {
         headers: {
           'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          'Content-Disposition': `attachment; filename="laporan-absensi-${startDate}-${endDate}.xlsx"`,
+          'Content-Disposition': `attachment; filename="laporan-absensi-${safeStart}-${safeEnd}.xlsx"`,
         },
       });
     }
 
-    // Summary stats
     const stats = {
       total: attendances.length,
       present: attendances.filter((a) => a.status === 'PRESENT').length,
       absent: attendances.filter((a) => a.status === 'ABSENT').length,
       leave: attendances.filter((a) => a.status === 'LEAVE').length,
       late: attendances.filter((a) => a.isLate).length,
-      overtime: attendances.filter((a) => a.isOvertime).length,
+      overtime: attendances.filter((a) => a.isOvertime && a.overtimeStatus === 'APPROVED').length,
+      overtimePending: attendances.filter((a) => a.overtimeStatus === 'PENDING').length,
       outOfRadius: attendances.filter((a) => a.isOutOfRadius).length,
     };
 

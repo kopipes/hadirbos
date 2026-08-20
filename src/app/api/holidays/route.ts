@@ -6,14 +6,22 @@ export async function GET(req: NextRequest) {
   const authUser = await getAuthUser(req);
   if (!authUser) return unauthorized();
 
-  const { searchParams } = new URL(req.url);
-  const year = searchParams.get('year') || new Date().getFullYear().toString();
+  try {
+    const { searchParams } = new URL(req.url);
+    const yearParam = searchParams.get('year');
+    const year = yearParam && /^\d{4}$/.test(yearParam)
+      ? yearParam
+      : new Date().getFullYear().toString();
 
-  const holidays = await prisma.holiday.findMany({
-    where: { date: { startsWith: year } },
-    orderBy: { date: 'asc' },
-  });
-  return ok(holidays);
+    const holidays = await prisma.holiday.findMany({
+      where: { date: { startsWith: year } },
+      orderBy: { date: 'asc' },
+    });
+    return ok(holidays);
+  } catch (error) {
+    console.error('[GET HOLIDAYS]', error);
+    return serverError();
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -24,10 +32,13 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const { name, date, isNational } = body;
-    if (!name || !date) return badRequest('Nama dan tanggal wajib diisi.');
+    if (!name?.trim() || !date) return badRequest('Nama dan tanggal wajib diisi.');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return badRequest('Format tanggal tidak valid. Gunakan YYYY-MM-DD.');
+    }
 
     const holiday = await prisma.holiday.create({
-      data: { name, date, isNational: isNational ?? true },
+      data: { name: name.trim(), date, isNational: isNational !== false },
     });
     return ok(holiday, 'Hari libur berhasil ditambahkan.');
   } catch (error) {

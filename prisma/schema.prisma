@@ -47,6 +47,11 @@ model User {
   correctionRequests    AttendanceCorrection[] @relation("CorrectionFor")
   overtimeRequests      OvertimeApproval[]   @relation("OvertimeRequested")
   overtimeReviews       OvertimeApproval[]   @relation("OvertimeReviewed")
+
+  @@index([role])
+  @@index([department])
+  @@index([managerId])
+  @@index([isActive])
 }
 
 model Office {
@@ -178,4 +183,7 @@ model Notification {
   isRead      Boolean  @default(false)
   metadata    String?
   createdAt   DateTime @default(now())
+
+  @@index([recipientId, isRead])
+  @@index([createdAt])
 }

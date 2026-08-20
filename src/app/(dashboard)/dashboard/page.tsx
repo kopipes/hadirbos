@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import {
   Users, Clock, TrendingUp, AlertCircle, CheckCircle2,
@@ -18,12 +18,15 @@ interface DashboardStats {
   overtimeToday: number;
   outOfRadiusToday: number;
   pendingCorrections: number;
+  pendingOvertime: number;
   todayAttendances: Attendance[];
 }
 
 interface UserProfile {
+  id: string;
   role: string;
   name: string;
+  workScheduleId?: string | null;
 }
 
 export default function DashboardPage() {
@@ -31,48 +34,67 @@ export default function DashboardPage() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [myAttendance, setMyAttendance] = useState<Attendance | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  useEffect(() => {
-    async function load() {
-      const [meRes, statsRes, attRes] = await Promise.all([
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const [meRes, attRes] = await Promise.all([
         fetch('/api/auth/me'),
-        fetch('/api/dashboard'),
-        fetch(`/api/attendances?date=${new Date().toISOString().split('T')[0]}&userId=me`),
+        fetch(`/api/attendances?date=${today}`),
       ]);
-      const meData = await meRes.json();
-      if (meData.success) setProfile(meData.data);
 
-      if (statsRes.ok) {
-        const s = await statsRes.json();
-        if (s.success) setStats(s.data);
+      const [meData, attData] = await Promise.all([meRes.json(), attRes.json()]);
+
+      if (!meData.success) { setError('Gagal memuat profil.'); return; }
+      const me: UserProfile = meData.data;
+      setProfile(me);
+
+      // My own attendance
+      if (attData.success) {
+        const mine = attData.data.find((a: Attendance) => a.userId === me.id);
+        if (mine) setMyAttendance(mine);
       }
 
-      // Get my own attendance
-      const myRes = await fetch(`/api/attendances?date=${new Date().toISOString().split('T')[0]}`);
-      const myData = await myRes.json();
-      if (myData.success && myData.data.length > 0) {
-        const me = await fetch('/api/auth/me');
-        const meD = await me.json();
-        if (meD.success) {
-          const mine = myData.data.find((a: Attendance) => a.userId === meD.data.id);
-          if (mine) setMyAttendance(mine);
-        }
+      // Manager/Admin/SPV: load dashboard stats
+      if (['ADMIN', 'MANAGER', 'SPV'].includes(me.role)) {
+        const statsRes = await fetch('/api/dashboard');
+        const statsData = await statsRes.json();
+        if (statsData.success) setStats(statsData.data);
       }
+    } catch {
+      setError('Gagal memuat data. Periksa koneksi internet Anda.');
+    } finally {
       setLoading(false);
     }
-    load();
   }, []);
+
+  useEffect(() => { load(); }, [load]);
 
   const isManager = profile?.role === 'ADMIN' || profile?.role === 'MANAGER' || profile?.role === 'SPV';
 
   if (loading) {
     return (
-      <div className="space-y-4 animate-pulse">
+      <div className="space-y-4 animate-pulse max-w-6xl mx-auto">
         <div className="h-8 bg-gray-200 rounded-xl w-48" />
+        <div className="h-28 bg-gray-200 rounded-2xl" />
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {[...Array(4)].map((_, i) => <div key={i} className="h-28 bg-gray-200 rounded-2xl" />)}
         </div>
-        <div className="h-64 bg-gray-200 rounded-2xl" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="max-w-6xl mx-auto">
+        <div className="card bg-red-50 border-red-200 text-red-700 flex items-center gap-3">
+          <AlertCircle size={18} />
+          <div className="flex-1">{error}</div>
+          <button onClick={load} className="btn-secondary btn-sm">Coba Lagi</button>
+        </div>
       </div>
     );
   }
@@ -88,29 +110,26 @@ export default function DashboardPage() {
           </p>
         </div>
         <Link href="/attendance" className="btn-primary btn-sm hidden md:flex">
-          <Clock size={14} />
-          Absen Sekarang
+          <Clock size={14} />Absen Sekarang
         </Link>
       </div>
 
-      {/* My attendance card - for regular users */}
+      {/* My attendance card */}
       {myAttendance ? (
-        <div className="card bg-gradient-to-r from-brand-500 to-brand-600 text-white border-0">
+        <div className="card bg-gradient-to-r from-sky-500 to-sky-600 text-white border-0">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-brand-100 text-sm font-medium">Status Hari Ini</p>
+              <p className="text-sky-100 text-sm font-medium">Status Hari Ini</p>
               <p className="text-2xl font-bold mt-1">
                 {myAttendance.checkOut ? 'Sudah Pulang' : myAttendance.checkIn ? 'Sedang Bekerja' : 'Belum Absen'}
               </p>
             </div>
-            <div className="text-right">
-              {myAttendance.checkIn && (
-                <div>
-                  <p className="text-brand-100 text-xs">Masuk</p>
-                  <p className="text-xl font-bold">{formatTime(myAttendance.checkIn)}</p>
-                </div>
-              )}
-            </div>
+            {myAttendance.checkIn && (
+              <div className="text-right">
+                <p className="text-sky-100 text-xs">Masuk</p>
+                <p className="text-xl font-bold">{formatTime(myAttendance.checkIn)}</p>
+              </div>
+            )}
           </div>
           {(myAttendance.isLate || myAttendance.isOvertime || myAttendance.isOutOfRadius) && (
             <div className="flex gap-2 mt-3 flex-wrap">
@@ -122,6 +141,9 @@ export default function DashboardPage() {
               {myAttendance.isOvertime && (
                 <span className="bg-white/20 text-white text-xs px-2 py-1 rounded-lg">
                   Lembur {myAttendance.overtimeMinutes} mnt
+                  {myAttendance.overtimeStatus === 'PENDING' && ' (Menunggu)'}
+                  {myAttendance.overtimeStatus === 'APPROVED' && ' (Disetujui)'}
+                  {myAttendance.overtimeStatus === 'REJECTED' && ' (Ditolak)'}
                 </span>
               )}
               {myAttendance.isOutOfRadius && (
@@ -134,12 +156,12 @@ export default function DashboardPage() {
         </div>
       ) : (
         <Link href="/attendance" className="block">
-          <div className="card bg-gradient-to-r from-brand-500 to-brand-600 text-white border-0 hover:shadow-lg transition-shadow cursor-pointer">
+          <div className="card bg-gradient-to-r from-sky-500 to-sky-600 text-white border-0 hover:shadow-lg transition-shadow cursor-pointer">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-brand-100 text-sm font-medium">Absensi Hari Ini</p>
+                <p className="text-sky-100 text-sm font-medium">Absensi Hari Ini</p>
                 <p className="text-2xl font-bold mt-1">Belum Absen Masuk</p>
-                <p className="text-brand-200 text-sm mt-1">Tap untuk absen sekarang</p>
+                <p className="text-sky-200 text-sm mt-1">Tap untuk absen sekarang</p>
               </div>
               <div className="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center">
                 <Clock size={28} className="text-white" />
@@ -149,47 +171,43 @@ export default function DashboardPage() {
         </Link>
       )}
 
-      {/* Stats - Manager/Admin only */}
+      {/* Manager/Admin stats */}
       {isManager && stats && (
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
-            <StatCard
-              label="Total Karyawan"
-              value={stats.totalEmployees}
-              icon={Users}
-              color="text-blue-500 bg-blue-50"
-            />
-            <StatCard
-              label="Hadir Hari Ini"
-              value={stats.presentToday}
-              icon={CheckCircle2}
-              color="text-green-500 bg-green-50"
-            />
-            <StatCard
-              label="Terlambat"
-              value={stats.lateToday}
-              icon={AlertCircle}
-              color="text-yellow-500 bg-yellow-50"
-            />
-            <StatCard
-              label="Tidak Hadir"
-              value={stats.absentToday}
-              icon={Timer}
-              color="text-red-500 bg-red-50"
-            />
+            <StatCard label="Total Karyawan" value={stats.totalEmployees} icon={Users} color="text-blue-500 bg-blue-50" />
+            <StatCard label="Hadir Hari Ini" value={stats.presentToday} icon={CheckCircle2} color="text-green-500 bg-green-50" />
+            <StatCard label="Terlambat" value={stats.lateToday} icon={AlertCircle} color="text-yellow-500 bg-yellow-50" />
+            <StatCard label="Tidak Hadir" value={stats.absentToday} icon={Timer} color="text-red-500 bg-red-50" />
           </div>
-
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <StatCard label="Lembur" value={stats.overtimeToday} icon={TrendingUp} color="text-purple-500 bg-purple-50" />
             <StatCard label="Diluar Radius" value={stats.outOfRadiusToday} icon={MapPin} color="text-orange-500 bg-orange-50" />
-            <StatCard label="Koreksi Pending" value={stats.pendingCorrections} icon={Calendar} color="text-cyan-500 bg-cyan-50" />
+            <Link href="/attendance?tab=corrections">
+              <div className={cn('stat-card cursor-pointer hover:shadow-md transition-shadow', stats.pendingCorrections > 0 && 'border-yellow-200 bg-yellow-50/50')}>
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center mb-2 bg-cyan-50">
+                  <Calendar size={18} className="text-cyan-500" />
+                </div>
+                <p className="text-2xl font-bold text-slate-900">{stats.pendingCorrections}</p>
+                <p className="text-xs text-slate-500 font-medium">Koreksi Pending</p>
+              </div>
+            </Link>
+            <Link href="/overtime">
+              <div className={cn('stat-card cursor-pointer hover:shadow-md transition-shadow', stats.pendingOvertime > 0 && 'border-purple-200 bg-purple-50/50')}>
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center mb-2 bg-purple-50">
+                  <TrendingUp size={18} className="text-purple-500" />
+                </div>
+                <p className="text-2xl font-bold text-slate-900">{stats.pendingOvertime}</p>
+                <p className="text-xs text-slate-500 font-medium">Lembur Pending</p>
+              </div>
+            </Link>
           </div>
 
-          {/* Today attendance list */}
+          {/* Today list */}
           <div className="card">
             <div className="flex items-center justify-between mb-4">
               <h2 className="section-title">Kehadiran Hari Ini</h2>
-              <Link href="/team" className="text-sm text-brand-500 font-semibold flex items-center gap-1 hover:text-brand-600">
+              <Link href="/team" className="text-sm text-sky-500 font-semibold flex items-center gap-1 hover:text-sky-600">
                 Lihat semua <ArrowRight size={14} />
               </Link>
             </div>
@@ -204,12 +222,8 @@ export default function DashboardPage() {
                     <p className="text-xs text-slate-500">{a.user?.department}</p>
                   </div>
                   <div className="text-right flex-shrink-0">
-                    <p className="text-sm font-semibold text-slate-800">
-                      {a.checkIn ? formatTime(a.checkIn) : '-'}
-                    </p>
-                    <span className={cn('badge text-xs', getStatusBadgeColor(a.status))}>
-                      {getStatusLabel(a.status)}
-                    </span>
+                    <p className="text-sm font-semibold text-slate-800">{a.checkIn ? formatTime(a.checkIn) : '-'}</p>
+                    <span className={cn('badge text-xs', getStatusBadgeColor(a.status))}>{getStatusLabel(a.status)}</span>
                   </div>
                 </div>
               ))}
@@ -225,22 +239,16 @@ export default function DashboardPage() {
       {!isManager && (
         <div className="grid grid-cols-2 gap-3">
           <Link href="/attendance" className="card-hover flex flex-col items-center gap-3 text-center p-6">
-            <div className="w-12 h-12 rounded-2xl bg-brand-50 flex items-center justify-center">
-              <Clock size={22} className="text-brand-500" />
+            <div className="w-12 h-12 rounded-2xl bg-sky-50 flex items-center justify-center">
+              <Clock size={22} className="text-sky-500" />
             </div>
-            <div>
-              <p className="font-semibold text-slate-800">Absen</p>
-              <p className="text-xs text-slate-500">Masuk & Pulang</p>
-            </div>
+            <div><p className="font-semibold text-slate-800">Absen</p><p className="text-xs text-slate-500">Masuk & Pulang</p></div>
           </Link>
-          <Link href="/attendance?tab=history" className="card-hover flex flex-col items-center gap-3 text-center p-6">
+          <Link href="/attendance" className="card-hover flex flex-col items-center gap-3 text-center p-6">
             <div className="w-12 h-12 rounded-2xl bg-green-50 flex items-center justify-center">
               <Calendar size={22} className="text-green-500" />
             </div>
-            <div>
-              <p className="font-semibold text-slate-800">Riwayat</p>
-              <p className="text-xs text-slate-500">Histori Absensi</p>
-            </div>
+            <div><p className="font-semibold text-slate-800">Riwayat</p><p className="text-xs text-slate-500">Histori Absensi</p></div>
           </Link>
         </div>
       )}
@@ -248,11 +256,7 @@ export default function DashboardPage() {
   );
 }
 
-function StatCard({
-  label, value, icon: Icon, color,
-}: {
-  label: string; value: number; icon: React.ElementType; color: string;
-}) {
+function StatCard({ label, value, icon: Icon, color }: { label: string; value: number; icon: React.ElementType; color: string }) {
   return (
     <div className="stat-card">
       <div className={cn('w-9 h-9 rounded-xl flex items-center justify-center mb-2', color)}>

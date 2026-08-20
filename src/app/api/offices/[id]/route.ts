@@ -2,6 +2,21 @@ import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getAuthUser, ok, unauthorized, forbidden, badRequest, serverError } from '@/lib/api';
 
+export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+  const authUser = await getAuthUser(req);
+  if (!authUser) return unauthorized();
+  if (!['ADMIN', 'MANAGER', 'SPV'].includes(authUser.role)) return forbidden();
+
+  try {
+    const office = await prisma.office.findUnique({ where: { id: params.id } });
+    if (!office) return badRequest('Lokasi tidak ditemukan.');
+    return ok(office);
+  } catch (error) {
+    console.error('[GET OFFICE]', error);
+    return serverError();
+  }
+}
+
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
   const authUser = await getAuthUser(req);
   if (!authUser) return unauthorized();
@@ -9,9 +24,23 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
 
   try {
     const body = await req.json();
+    const { name, address, latitude, longitude, radius, isActive } = body;
+
+    if (!name?.trim()) return badRequest('Nama kantor wajib diisi.');
+    if (typeof latitude !== 'number' || typeof longitude !== 'number') {
+      return badRequest('Latitude dan longitude harus berupa angka.');
+    }
+
     const office = await prisma.office.update({
       where: { id: params.id },
-      data: body,
+      data: {
+        name: name.trim(),
+        address: address?.trim() || null,
+        latitude,
+        longitude,
+        radius: typeof radius === 'number' ? radius : 100,
+        ...(isActive !== undefined ? { isActive: Boolean(isActive) } : {}),
+      },
     });
     return ok(office, 'Lokasi berhasil diperbarui.');
   } catch (error) {
@@ -26,6 +55,7 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   if (authUser.role !== 'ADMIN') return forbidden();
 
   try {
+    // Soft delete — don't break existing user assignments
     await prisma.office.update({
       where: { id: params.id },
       data: { isActive: false },
@@ -35,13 +65,4 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
     console.error('[DELETE OFFICE]', error);
     return serverError();
   }
-}
-
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
-  const authUser = await getAuthUser(req);
-  if (!authUser) return unauthorized();
-
-  const office = await prisma.office.findUnique({ where: { id: params.id } });
-  if (!office) return badRequest('Lokasi tidak ditemukan.');
-  return ok(office);
 }
