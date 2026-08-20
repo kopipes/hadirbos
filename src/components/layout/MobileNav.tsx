@@ -2,13 +2,14 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Clock, Users, BarChart3, Bell } from 'lucide-react';
+import { LayoutDashboard, Clock, Users, BarChart3, Bell, Palmtree } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { JWTPayload } from '@/lib/auth';
 
 const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/attendance', label: 'Absen', icon: Clock },
+  { href: '/leave', label: 'Cuti', icon: Palmtree },
   { href: '/team', label: 'Tim', icon: Users, roles: ['ADMIN', 'MANAGER', 'SPV'] },
   { href: '/reports', label: 'Laporan', icon: BarChart3, roles: ['ADMIN', 'MANAGER', 'SPV'] },
   { href: '/notifications', label: 'Notifikasi', icon: Bell },
@@ -22,7 +23,7 @@ export default function MobileNav({ user }: { user: JWTPayload }) {
   );
 
   return (
-    <nav className="md:hidden fixed bottom-0 inset-x-0 bg-white border-t border-gray-100 z-50 safe-area-bottom">
+    <nav className="md:hidden fixed bottom-0 inset-x-0 bg-white border-t border-gray-100 z-50 safe-area-bottom" aria-label="Navigasi utama">
       <div className="flex items-center justify-around px-2 py-2">
         {filtered.map((item) => {
           const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
@@ -30,14 +31,14 @@ export default function MobileNav({ user }: { user: JWTPayload }) {
             <Link
               key={item.href}
               href={item.href}
+              aria-current={isActive ? 'page' : undefined}
               className={cn(
                 'flex flex-col items-center gap-1 px-3 py-1.5 rounded-xl transition-all',
-                isActive ? 'text-brand-500' : 'text-slate-400'
+                isActive ? 'text-sky-500' : 'text-slate-400'
               )}
             >
-              <item.icon size={22} />
+              <item.icon size={22} aria-hidden="true" />
               <span className="text-xs font-medium">{item.label}</span>
-              {isActive && <span className="absolute bottom-1.5 w-1 h-1 rounded-full bg-brand-500" />}
             </Link>
           );
         })}

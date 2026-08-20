@@ -9,6 +9,9 @@ export type NotificationType =
   | 'CORRECTION_REQUEST'
   | 'CORRECTION_APPROVED'
   | 'CORRECTION_REJECTED'
+  | 'LEAVE_REQUEST'
+  | 'LEAVE_APPROVED'
+  | 'LEAVE_REJECTED'
   | 'SYSTEM';
 
 export interface UserProfile {

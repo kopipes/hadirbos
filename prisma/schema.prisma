@@ -47,6 +47,8 @@ model User {
   correctionRequests    AttendanceCorrection[] @relation("CorrectionFor")
   overtimeRequests      OvertimeApproval[]   @relation("OvertimeRequested")
   overtimeReviews       OvertimeApproval[]   @relation("OvertimeReviewed")
+  leaveRequests         LeaveRequest[]       @relation("LeaveUser")
+  leaveReviews          LeaveRequest[]       @relation("LeaveReviewer")
 
   @@index([role])
   @@index([department])
@@ -160,6 +162,29 @@ model Department {
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+// LeaveType: ANNUAL | SICK | MATERNITY | PATERNITY | PERMISSION | OTHER
+// LeaveStatus: PENDING | APPROVED | REJECTED | CANCELLED
+model LeaveRequest {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation("LeaveUser", fields: [userId], references: [id])
+  reviewedById String?
+  reviewedBy   User?    @relation("LeaveReviewer", fields: [reviewedById], references: [id])
+  type         String   // ANNUAL | SICK | MATERNITY | PATERNITY | PERMISSION | OTHER
+  startDate    String   // YYYY-MM-DD
+  endDate      String   // YYYY-MM-DD
+  totalDays    Int
+  reason       String
+  status       String   @default("PENDING")
+  reviewNote   String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([startDate, endDate])
 }
 
 model Holiday {
