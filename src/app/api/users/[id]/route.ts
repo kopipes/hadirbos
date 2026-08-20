@@ -42,9 +42,9 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
 
     // Fields everyone can update on themselves
     if (name) updateData.name = name;
-    if (email !== undefined) updateData.email = email;
-    if (phone !== undefined) updateData.phone = phone;
-    if (address !== undefined) updateData.address = address;
+    if (email !== undefined) updateData.email = email?.trim() || null;
+    if (phone !== undefined) updateData.phone = phone?.trim() || null;
+    if (address !== undefined) updateData.address = address?.trim() || null;
     if (password) updateData.password = await bcrypt.hash(password, 12);
 
     // Admin-only fields

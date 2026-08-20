@@ -21,12 +21,17 @@ export default function AttendancePage() {
   const [history, setHistory] = useState<Attendance[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [userId, setUserId] = useState<string>('');
+  const [hasSchedule, setHasSchedule] = useState<boolean>(true);
   const webcamRef = useRef<Webcam>(null);
 
   useEffect(() => {
     loadTodayAttendance();
-    fetch('/api/auth/me').then(r => r.json()).then(d => { if (d.success) setUserId(d.data.id); });
-    // Auto-get location
+    fetch('/api/auth/me').then(r => r.json()).then(d => {
+      if (d.success) {
+        setUserId(d.data.id);
+        setHasSchedule(!!d.data.workScheduleId);
+      }
+    });
     getLocation();
   }, []);
 
@@ -182,6 +187,14 @@ export default function AttendancePage() {
                   )}
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* No schedule warning */}
+          {!hasSchedule && (
+            <div className="flex items-start gap-3 p-3 bg-yellow-50 border border-yellow-200 rounded-xl text-sm text-yellow-800">
+              <AlertTriangle size={16} className="flex-shrink-0 mt-0.5" />
+              <p>Jadwal kerja belum diatur. Absensi tetap bisa dilakukan, namun keterlambatan dan lembur tidak akan dihitung otomatis. Hubungi admin untuk mengatur jadwal.</p>
             </div>
           )}
 
