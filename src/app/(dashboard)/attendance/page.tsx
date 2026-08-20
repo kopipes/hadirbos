@@ -328,7 +328,15 @@ export default function AttendancePage() {
                         {getStatusLabel(a.status)}
                       </span>
                       {a.isLate && <span className="badge bg-yellow-50 text-yellow-700 border-yellow-200">Terlambat</span>}
-                      {a.isOvertime && <span className="badge bg-purple-50 text-purple-700 border-purple-200">Lembur</span>}
+                      {a.isOvertime && a.overtimeStatus === 'PENDING' && (
+                        <span className="badge bg-yellow-50 text-yellow-700 border-yellow-200">Lembur (Menunggu)</span>
+                      )}
+                      {a.isOvertime && a.overtimeStatus === 'APPROVED' && (
+                        <span className="badge bg-purple-50 text-purple-700 border-purple-200">Lembur (Disetujui)</span>
+                      )}
+                      {a.isOvertime && a.overtimeStatus === 'REJECTED' && (
+                        <span className="badge bg-red-50 text-red-700 border-red-200">Lembur (Ditolak)</span>
+                      )}
                     </div>
                     <div className="flex gap-4 mt-1.5 text-sm text-slate-600">
                       <span>Masuk: <strong>{a.checkIn ? formatTime(a.checkIn) : '-'}</strong></span>

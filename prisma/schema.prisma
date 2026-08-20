@@ -45,6 +45,8 @@ model User {
   notificationsSent     Notification[]       @relation("NotificationSender")
   corrections           AttendanceCorrection[] @relation("CorrectionBy")
   correctionRequests    AttendanceCorrection[] @relation("CorrectionFor")
+  overtimeRequests      OvertimeApproval[]   @relation("OvertimeRequested")
+  overtimeReviews       OvertimeApproval[]   @relation("OvertimeReviewed")
 }
 
 model Office {
@@ -99,15 +101,33 @@ model Attendance {
   lateMinutes     Int      @default(0)
   isOvertime      Boolean  @default(false)
   overtimeMinutes Int      @default(0)
+  overtimeStatus  String   @default("NONE") // NONE | PENDING | APPROVED | REJECTED
   isOutOfRadius   Boolean  @default(false)
   status          String   @default("PRESENT")
   notes           String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  corrections AttendanceCorrection[]
+  corrections     AttendanceCorrection[]
+  overtimeApproval OvertimeApproval?
 
   @@unique([userId, date])
+}
+
+// OvertimeStatus: NONE | PENDING | APPROVED | REJECTED
+model OvertimeApproval {
+  id           String     @id @default(cuid())
+  attendanceId String     @unique
+  attendance   Attendance @relation(fields: [attendanceId], references: [id])
+  requestedById String
+  requestedBy  User       @relation("OvertimeRequested", fields: [requestedById], references: [id])
+  reviewedById  String?
+  reviewedBy   User?      @relation("OvertimeReviewed", fields: [reviewedById], references: [id])
+  overtimeMinutes Int
+  status       String     @default("PENDING") // PENDING | APPROVED | REJECTED
+  notes        String?    // reviewer notes
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
 }
 
 model AttendanceCorrection {

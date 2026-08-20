@@ -191,16 +191,25 @@ export async function POST(req: NextRequest) {
           checkOutAddress: address || null,
           isOvertime,
           overtimeMinutes,
+          overtimeStatus: isOvertime ? 'PENDING' : 'NONE',
         },
       });
 
-      // Notify manager if overtime
-      if (user.managerId && isOvertime) {
+      // If overtime: create OvertimeApproval record + notify manager
+      if (isOvertime && user.managerId) {
+        await prisma.overtimeApproval.create({
+          data: {
+            attendanceId: attendance.id,
+            requestedById: authUser.userId,
+            overtimeMinutes,
+            status: 'PENDING',
+          },
+        });
         await prisma.notification.create({
           data: {
             type: 'OVERTIME',
-            title: 'Lembur Karyawan',
-            message: `${user.name} lembur ${overtimeMinutes} menit (pulang pukul ${now.toTimeString().slice(0, 5)})`,
+            title: 'Pengajuan Lembur',
+            message: `${user.name} lembur ${overtimeMinutes} menit (pulang pukul ${now.toTimeString().slice(0, 5)}). Menunggu persetujuan Anda.`,
             recipientId: user.managerId,
             senderId: authUser.userId,
           },

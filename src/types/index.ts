@@ -72,6 +72,7 @@ export interface Attendance {
   lateMinutes: number;
   isOvertime: boolean;
   overtimeMinutes: number;
+  overtimeStatus: 'NONE' | 'PENDING' | 'APPROVED' | 'REJECTED';
   isOutOfRadius: boolean;
   status: AttendanceStatus;
   notes?: string | null;

@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, Clock, Users, BarChart3, Settings,
-  Fingerprint, CalendarDays, MapPin, Bell, LogOut, ChevronRight, Building2
+  Fingerprint, CalendarDays, MapPin, Bell, LogOut, ChevronRight, Building2, Timer
 } from 'lucide-react';
 import { cn, getRoleLabel, getRoleBadgeColor } from '@/lib/utils';
 import type { JWTPayload } from '@/lib/auth';
@@ -20,6 +20,7 @@ const navItems: NavItem[] = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/attendance', label: 'Absensi', icon: Clock },
   { href: '/team', label: 'Tim Saya', icon: Users, roles: ['ADMIN', 'MANAGER', 'SPV'] },
+  { href: '/overtime', label: 'Approval Lembur', icon: Timer, roles: ['ADMIN', 'MANAGER', 'SPV'] },
   { href: '/reports', label: 'Laporan', icon: BarChart3, roles: ['ADMIN', 'MANAGER', 'SPV'] },
   { href: '/admin/users', label: 'Kelola Karyawan', icon: Users, roles: ['ADMIN'] },
   { href: '/admin/departments', label: 'Departemen', icon: Building2, roles: ['ADMIN'] },
