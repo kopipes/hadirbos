@@ -206,6 +206,20 @@ async function main() {
     });
   }
 
+  // Seed departments
+  const deptNames = [
+    'Creative', 'Event DeniHeidi', 'Event DesenDevy', 'Event Production',
+    'Event Sports', 'FutureVast', 'HR-GA', 'NTOP', 'Premium', 'Retail',
+    'Sacca Expo', 'Sacca Mall', 'Social Media', 'Starlight', 'Studios',
+  ];
+  for (const name of deptNames) {
+    await prisma.department.upsert({
+      where: { name },
+      update: {},
+      create: { name },
+    });
+  }
+
   // Seed holidays
   const holidays = [
     { name: 'Tahun Baru', date: '2026-01-01' },

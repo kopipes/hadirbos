@@ -6,6 +6,11 @@ import toast from 'react-hot-toast';
 import { cn, getRoleBadgeColor, getRoleLabel } from '@/lib/utils';
 import type { UserProfile, Office, WorkSchedule } from '@/types';
 
+interface Department {
+  id: string;
+  name: string;
+}
+
 interface UserForm {
   nik: string; name: string; email: string; phone: string;
   position: string; department: string; role: string;
@@ -21,6 +26,7 @@ export default function AdminUsersPage() {
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [offices, setOffices] = useState<Office[]>([]);
   const [schedules, setSchedules] = useState<WorkSchedule[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
   const [managers, setManagers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -32,18 +38,20 @@ export default function AdminUsersPage() {
   const [deleting, setDeleting] = useState(false);
 
   async function load() {
-    const [uRes, oRes, sRes] = await Promise.all([
+    const [uRes, oRes, sRes, dRes] = await Promise.all([
       fetch('/api/users'),
       fetch('/api/offices'),
       fetch('/api/work-schedules'),
+      fetch('/api/departments'),
     ]);
-    const [uData, oData, sData] = await Promise.all([uRes.json(), oRes.json(), sRes.json()]);
+    const [uData, oData, sData, dData] = await Promise.all([uRes.json(), oRes.json(), sRes.json(), dRes.json()]);
     if (uData.success) {
       setUsers(uData.data);
       setManagers(uData.data.filter((u: UserProfile) => ['ADMIN', 'MANAGER', 'SPV'].includes(u.role)));
     }
     if (oData.success) setOffices(oData.data);
     if (sData.success) setSchedules(sData.data);
+    if (dData.success) setDepartments(dData.data);
     setLoading(false);
   }
 
@@ -265,7 +273,12 @@ export default function AdminUsersPage() {
                 </div>
                 <div>
                   <label className="label">Departemen</label>
-                  <input className="input" value={form.department} onChange={e => setForm(f => ({ ...f, department: e.target.value }))} />
+                  <select className="input" value={form.department} onChange={e => setForm(f => ({ ...f, department: e.target.value }))}>
+                    <option value="">Pilih Departemen</option>
+                    {departments.map(d => (
+                      <option key={d.id} value={d.name}>{d.name}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
               <div>
