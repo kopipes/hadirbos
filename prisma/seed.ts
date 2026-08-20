@@ -163,6 +163,49 @@ async function main() {
     });
   }
 
+  // Real users
+  const realUserPass = await bcrypt.hash('user123', 12);
+  const realUsers = [
+    {
+      nik: '3173084710830008',
+      name: 'Iin Rosnawati',
+      phone: '087781336202',
+      address: 'Jl. Musyawarah III RT 08/RT 01 Srengseng, Kembangan',
+    },
+    {
+      nik: '3175030112890007',
+      name: 'Aurora Ichiyattie',
+      phone: '082213220162',
+      address: 'Jl. Setia RT 06/RW 02 Bidara Cina, Jatinegara',
+    },
+    {
+      nik: '3173080609781001',
+      name: 'M. Zainuri',
+      phone: '081392776869',
+      address: 'Kp. Basmol RT 07/RW 06 Kembangan Utara, Kembangan',
+    },
+    {
+      nik: '3275020804980008',
+      name: 'Adha Suryaningrat',
+      phone: '089508016701',
+      address: 'KP Tambun RT 1/RW 10 Bintara Jaya, Bekasi Barat',
+    },
+  ];
+  for (const u of realUsers) {
+    await prisma.user.upsert({
+      where: { nik: u.nik },
+      update: { phone: u.phone, address: u.address },
+      create: {
+        nik: u.nik,
+        name: u.name,
+        phone: u.phone,
+        address: u.address,
+        role: 'USER',
+        password: realUserPass,
+      },
+    });
+  }
+
   // Seed holidays
   const holidays = [
     { name: 'Tahun Baru', date: '2026-01-01' },
