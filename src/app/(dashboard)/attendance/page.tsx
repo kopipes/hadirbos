@@ -1,13 +1,20 @@
 'use client';
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Camera, CameraOff, MapPin, CheckCircle2, XCircle, Loader2, Clock, History, AlertTriangle } from 'lucide-react';
+import { CameraOff, MapPin, CheckCircle2, XCircle, Loader2, Clock, History, AlertTriangle, LogOut, X, Save } from 'lucide-react';
 import Webcam from 'react-webcam';
 import toast from 'react-hot-toast';
 import { cn, formatTime, formatDate, getStatusBadgeColor, getStatusLabel } from '@/lib/utils';
 import type { Attendance } from '@/types';
 
 type Tab = 'checkin' | 'history';
+
+interface EarlyLeaveStatus {
+  id: string;
+  status: string; // PENDING | APPROVED | REJECTED
+  reason: string;
+  estimatedOut?: string | null;
+}
 
 export default function AttendancePage() {
   const [tab, setTab] = useState<Tab>('checkin');
@@ -20,37 +27,72 @@ export default function AttendancePage() {
   const [todayAttendance, setTodayAttendance] = useState<Attendance | null>(null);
   const [history, setHistory] = useState<Attendance[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const [userId, setUserId] = useState<string>('');
   const [hasSchedule, setHasSchedule] = useState<boolean>(true);
+  const [scheduleEndTime, setScheduleEndTime] = useState<string>('17:00');
+
+  // Early leave state
+  const [earlyLeave, setEarlyLeave] = useState<EarlyLeaveStatus | null>(null);
+  const [showEarlyLeaveModal, setShowEarlyLeaveModal] = useState(false);
+  const [earlyLeaveReason, setEarlyLeaveReason] = useState('');
+  const [earlyLeaveEstTime, setEarlyLeaveEstTime] = useState('');
+  const [submittingEarlyLeave, setSubmittingEarlyLeave] = useState(false);
+
   const webcamRef = useRef<Webcam>(null);
+
+  const loadTodayAttendance = useCallback(async () => {
+    const today = new Date().toISOString().split('T')[0];
+    try {
+      const res = await fetch(`/api/attendances?date=${today}`);
+      const data = await res.json();
+      if (data.success && data.data.length > 0) {
+        setTodayAttendance(data.data[0]);
+      } else {
+        setTodayAttendance(null);
+      }
+    } catch { /* ignore */ }
+  }, []);
 
   useEffect(() => {
     loadTodayAttendance();
     fetch('/api/auth/me').then(r => r.json()).then(d => {
       if (d.success) {
-        setUserId(d.data.id);
         setHasSchedule(!!d.data.workScheduleId);
+        if (d.data.workSchedule?.checkOutTime) {
+          setScheduleEndTime(d.data.workSchedule.checkOutTime);
+        }
       }
     });
     getLocation();
-  }, []);
+  }, [loadTodayAttendance]);
 
-  async function loadTodayAttendance() {
-    const today = new Date().toISOString().split('T')[0];
-    const res = await fetch(`/api/attendances?date=${today}`);
-    const data = await res.json();
-    if (data.success && data.data.length > 0) {
-      setTodayAttendance(data.data[0]);
+  // Load early leave status when attendance is loaded
+  useEffect(() => {
+    if (todayAttendance && !todayAttendance.checkOut) {
+      fetch('/api/early-leave?status=')
+        .then(r => r.json())
+        .then(d => {
+          if (d.success) {
+            const todayEL = d.data.find((el: EarlyLeaveStatus & { attendance: { id: string } }) =>
+              el.attendance?.id === todayAttendance.id
+            );
+            setEarlyLeave(todayEL || null);
+          }
+        })
+        .catch(() => {});
+    } else {
+      setEarlyLeave(null);
     }
-  }
+  }, [todayAttendance]);
 
   async function loadHistory() {
     setHistoryLoading(true);
     const end = new Date().toISOString().split('T')[0];
     const start = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    const res = await fetch(`/api/attendances?startDate=${start}&endDate=${end}`);
-    const data = await res.json();
-    if (data.success) setHistory(data.data);
+    try {
+      const res = await fetch(`/api/attendances?startDate=${start}&endDate=${end}`);
+      const data = await res.json();
+      if (data.success) setHistory(data.data);
+    } catch { /* ignore */ }
     setHistoryLoading(false);
   }
 
@@ -71,7 +113,6 @@ export default function AttendancePage() {
         const { latitude: lat, longitude: lng } = pos.coords;
         setLocation({ lat, lng });
         setLocating(false);
-        // Reverse geocode (simple)
         try {
           const r = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`);
           const d = await r.json();
@@ -90,43 +131,36 @@ export default function AttendancePage() {
     );
   }
 
+  // Determine if current time is before scheduled end time (early checkout territory)
+  function isEarlyCheckout(): boolean {
+    const now = new Date();
+    const [h, m] = scheduleEndTime.split(':').map(Number);
+    const end = new Date(now);
+    end.setHours(h, m, 0, 0);
+    return now < end;
+  }
+
   const canCheckIn = !todayAttendance?.checkIn;
-  const canCheckOut = todayAttendance?.checkIn && !todayAttendance?.checkOut;
+  // Can checkout if: checked in, not checked out, AND (time is normal OR early leave approved)
+  const earlyLeaveApproved = earlyLeave?.status === 'APPROVED';
+  const canCheckOut = !!(todayAttendance?.checkIn && !todayAttendance?.checkOut &&
+    (!isEarlyCheckout() || earlyLeaveApproved || !hasSchedule));
 
   async function handleAttendance(type: 'checkin' | 'checkout') {
-    if (!location) {
-      toast.error('Lokasi belum terdeteksi. Tap "Perbarui Lokasi".');
-      return;
-    }
-    if (!webcamRef.current) {
-      toast.error('Kamera belum siap.');
-      return;
-    }
-
+    if (!location) { toast.error('Lokasi belum terdeteksi. Tap "Perbarui Lokasi".'); return; }
+    if (!webcamRef.current) { toast.error('Kamera belum siap.'); return; }
     const photo = webcamRef.current.getScreenshot();
-    if (!photo) {
-      toast.error('Gagal mengambil foto. Pastikan kamera aktif.');
-      return;
-    }
+    if (!photo) { toast.error('Gagal mengambil foto. Pastikan kamera aktif.'); return; }
 
     setLoading(true);
     try {
       const res = await fetch('/api/attendances', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type,
-          photo,
-          latitude: location.lat,
-          longitude: location.lng,
-          address: location.address,
-        }),
+        body: JSON.stringify({ type, photo, latitude: location.lat, longitude: location.lng, address: location.address }),
       });
       const data = await res.json();
-      if (!res.ok || !data.success) {
-        toast.error(data.error || 'Absen gagal.');
-        return;
-      }
+      if (!res.ok || !data.success) { toast.error(data.error || 'Absen gagal.'); return; }
       toast.success(type === 'checkin' ? 'Absen masuk berhasil!' : 'Absen pulang berhasil!');
       await loadTodayAttendance();
     } catch {
@@ -135,6 +169,41 @@ export default function AttendancePage() {
       setLoading(false);
     }
   }
+
+  async function handleEarlyLeaveSubmit() {
+    if (!earlyLeaveReason.trim()) { toast.error('Alasan wajib diisi.'); return; }
+    setSubmittingEarlyLeave(true);
+    try {
+      const res = await fetch('/api/early-leave', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: earlyLeaveReason, estimatedOut: earlyLeaveEstTime || undefined }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        toast.success('Pengajuan izin pulang awal berhasil dikirim!');
+        setShowEarlyLeaveModal(false);
+        setEarlyLeaveReason('');
+        setEarlyLeaveEstTime('');
+        // Reload to get updated early leave status
+        await loadTodayAttendance();
+      } else {
+        toast.error(data.error || 'Gagal mengajukan izin.');
+      }
+    } catch {
+      toast.error('Gagal terhubung ke server.');
+    } finally {
+      setSubmittingEarlyLeave(false);
+    }
+  }
+
+  const showEarlyLeaveButton = !!(
+    todayAttendance?.checkIn &&
+    !todayAttendance?.checkOut &&
+    hasSchedule &&
+    isEarlyCheckout() &&
+    !earlyLeave
+  );
 
   return (
     <div className="max-w-lg mx-auto space-y-4">
@@ -164,28 +233,47 @@ export default function AttendancePage() {
                 <div className="flex-1">
                   <p className="font-semibold text-slate-800">Status Hari Ini</p>
                   <div className="flex gap-4 mt-1 text-sm text-slate-600">
-                    {todayAttendance.checkIn && (
-                      <span>Masuk: <strong>{formatTime(todayAttendance.checkIn)}</strong></span>
+                    {todayAttendance.checkIn && <span>Masuk: <strong>{formatTime(todayAttendance.checkIn)}</strong></span>}
+                    {todayAttendance.checkOut && <span>Pulang: <strong>{formatTime(todayAttendance.checkOut)}</strong></span>}
+                  </div>
+                  <div className="flex gap-2 mt-2 flex-wrap">
+                    {todayAttendance.isLate && (
+                      <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full font-medium">
+                        Terlambat {todayAttendance.lateMinutes} mnt
+                      </span>
                     )}
-                    {todayAttendance.checkOut && (
-                      <span>Pulang: <strong>{formatTime(todayAttendance.checkOut)}</strong></span>
+                    {todayAttendance.isOutOfRadius && (
+                      <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-medium flex items-center gap-1">
+                        <AlertTriangle size={11} /> Di luar radius
+                      </span>
                     )}
                   </div>
-                  {(todayAttendance.isLate || todayAttendance.isOutOfRadius) && (
-                    <div className="flex gap-2 mt-2 flex-wrap">
-                      {todayAttendance.isLate && (
-                        <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full font-medium">
-                          Terlambat {todayAttendance.lateMinutes} mnt
-                        </span>
-                      )}
-                      {todayAttendance.isOutOfRadius && (
-                        <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-medium flex items-center gap-1">
-                          <AlertTriangle size={11} /> Di luar radius
-                        </span>
-                      )}
-                    </div>
-                  )}
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* Early leave status banner */}
+          {earlyLeave && (
+            <div className={cn('card border flex items-start gap-3',
+              earlyLeave.status === 'PENDING' ? 'bg-yellow-50 border-yellow-200' :
+              earlyLeave.status === 'APPROVED' ? 'bg-green-50 border-green-200' :
+              'bg-red-50 border-red-200')}>
+              <LogOut size={18} className={cn('flex-shrink-0 mt-0.5',
+                earlyLeave.status === 'PENDING' ? 'text-yellow-500' :
+                earlyLeave.status === 'APPROVED' ? 'text-green-500' : 'text-red-500')} />
+              <div>
+                <p className={cn('text-sm font-semibold',
+                  earlyLeave.status === 'PENDING' ? 'text-yellow-800' :
+                  earlyLeave.status === 'APPROVED' ? 'text-green-800' : 'text-red-800')}>
+                  {earlyLeave.status === 'PENDING' && 'Izin pulang awal menunggu persetujuan'}
+                  {earlyLeave.status === 'APPROVED' && 'Izin pulang awal disetujui — silakan absen pulang'}
+                  {earlyLeave.status === 'REJECTED' && 'Izin pulang awal ditolak'}
+                </p>
+                <p className="text-xs mt-0.5 text-slate-600">Alasan: {earlyLeave.reason}</p>
+                {earlyLeave.estimatedOut && (
+                  <p className="text-xs text-slate-500">Est. pulang: {earlyLeave.estimatedOut}</p>
+                )}
               </div>
             </div>
           )}
@@ -194,7 +282,7 @@ export default function AttendancePage() {
           {!hasSchedule && (
             <div className="flex items-start gap-3 p-3 bg-yellow-50 border border-yellow-200 rounded-xl text-sm text-yellow-800">
               <AlertTriangle size={16} className="flex-shrink-0 mt-0.5" />
-              <p>Jadwal kerja belum diatur. Absensi tetap bisa dilakukan, namun keterlambatan dan lembur tidak akan dihitung otomatis. Hubungi admin untuk mengatur jadwal.</p>
+              <p>Jadwal kerja belum diatur. Absensi tetap bisa dilakukan, namun keterlambatan dan lembur tidak akan dihitung otomatis. Hubungi admin.</p>
             </div>
           )}
 
@@ -209,9 +297,7 @@ export default function AttendancePage() {
                   videoConstraints={{ facingMode: 'user', width: 480, height: 360 }}
                   className="w-full h-full object-cover camera-preview"
                   onUserMedia={() => setCameraReady(true)}
-                  onUserMediaError={(e) => {
-                    setCameraError(typeof e === 'string' ? e : 'Izin kamera ditolak.');
-                  }}
+                  onUserMediaError={(e) => setCameraError(typeof e === 'string' ? e : 'Izin kamera ditolak.')}
                 />
               ) : (
                 <div className="flex flex-col items-center gap-2 text-slate-400 p-6 text-center">
@@ -225,7 +311,6 @@ export default function AttendancePage() {
                   <Loader2 className="animate-spin text-white" size={32} />
                 </div>
               )}
-              {/* Face guide overlay */}
               {cameraReady && (
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                   <div className="w-40 h-48 rounded-full border-2 border-white/50 border-dashed" />
@@ -244,9 +329,7 @@ export default function AttendancePage() {
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-slate-700">Lokasi</p>
                 {locating ? (
-                  <p className="text-xs text-slate-500 flex items-center gap-1 mt-0.5">
-                    <Loader2 size={12} className="animate-spin" /> Mencari lokasi...
-                  </p>
+                  <p className="text-xs text-slate-500 flex items-center gap-1 mt-0.5"><Loader2 size={12} className="animate-spin" /> Mencari lokasi...</p>
                 ) : location ? (
                   <p className="text-xs text-slate-500 mt-0.5 truncate">{location.address || `${location.lat.toFixed(5)}, ${location.lng.toFixed(5)}`}</p>
                 ) : (
@@ -264,12 +347,10 @@ export default function AttendancePage() {
             <button
               onClick={() => handleAttendance('checkin')}
               disabled={!canCheckIn || loading || !cameraReady || !location}
-              className={cn(
-                'btn btn-lg flex-col gap-1 h-auto py-4',
+              className={cn('btn btn-lg flex-col gap-1 h-auto py-4',
                 canCheckIn && cameraReady && location
-                  ? 'bg-brand-500 text-white hover:bg-brand-600 shadow-sm'
-                  : 'bg-gray-100 text-gray-400 cursor-not-allowed'
-              )}
+                  ? 'bg-sky-500 text-white hover:bg-sky-600 shadow-sm'
+                  : 'bg-gray-100 text-gray-400 cursor-not-allowed')}
             >
               {loading ? <Loader2 size={24} className="animate-spin" /> : <CheckCircle2 size={24} />}
               <span>Absen Masuk</span>
@@ -277,25 +358,36 @@ export default function AttendancePage() {
             <button
               onClick={() => handleAttendance('checkout')}
               disabled={!canCheckOut || loading || !cameraReady || !location}
-              className={cn(
-                'btn btn-lg flex-col gap-1 h-auto py-4',
+              className={cn('btn btn-lg flex-col gap-1 h-auto py-4',
                 canCheckOut && cameraReady && location
-                  ? 'bg-success-500 text-white hover:bg-success-600 shadow-sm'
-                  : 'bg-gray-100 text-gray-400 cursor-not-allowed'
-              )}
+                  ? 'bg-green-500 text-white hover:bg-green-600 shadow-sm'
+                  : 'bg-gray-100 text-gray-400 cursor-not-allowed')}
             >
               {loading ? <Loader2 size={24} className="animate-spin" /> : <XCircle size={24} />}
               <span>Absen Pulang</span>
             </button>
           </div>
 
+          {/* Early checkout blocked hint */}
+          {todayAttendance?.checkIn && !todayAttendance?.checkOut && hasSchedule && isEarlyCheckout() && !earlyLeaveApproved && (
+            <p className="text-center text-xs text-slate-500 bg-gray-50 rounded-xl py-2 px-3">
+              Belum waktunya pulang (jadwal: {scheduleEndTime}). Ajukan izin pulang awal jika perlu.
+            </p>
+          )}
+
+          {/* Izin pulang awal button */}
+          {showEarlyLeaveButton && (
+            <button
+              onClick={() => setShowEarlyLeaveModal(true)}
+              className="w-full btn-secondary flex items-center justify-center gap-2 py-3"
+            >
+              <LogOut size={16} />
+              Ajukan Izin Pulang Awal
+            </button>
+          )}
+
           {!cameraReady && !cameraError && (
             <p className="text-center text-xs text-slate-400">Memuat kamera, harap tunggu...</p>
-          )}
-          {!location && !locating && !locationError && (
-            <p className="text-center text-xs text-yellow-600 bg-yellow-50 rounded-xl py-2 px-3">
-              GPS diperlukan untuk absen. Pastikan izin lokasi aktif.
-            </p>
           )}
         </div>
       )}
@@ -305,9 +397,7 @@ export default function AttendancePage() {
           <h2 className="section-title">Riwayat 30 Hari Terakhir</h2>
           {historyLoading ? (
             <div className="space-y-2">
-              {[...Array(5)].map((_, i) => (
-                <div key={i} className="h-16 bg-gray-100 rounded-xl animate-pulse" />
-              ))}
+              {[...Array(5)].map((_, i) => <div key={i} className="h-16 bg-gray-100 rounded-xl animate-pulse" />)}
             </div>
           ) : history.length === 0 ? (
             <div className="card text-center py-12">
@@ -323,30 +413,77 @@ export default function AttendancePage() {
                     <p className="text-xs text-slate-400">{new Date(a.date).toLocaleDateString('id-ID', { month: 'short' })}</p>
                   </div>
                   <div className="flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className={cn('badge', getStatusBadgeColor(a.status))}>
-                        {getStatusLabel(a.status)}
-                      </span>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={cn('badge', getStatusBadgeColor(a.status))}>{getStatusLabel(a.status)}</span>
                       {a.isLate && <span className="badge bg-yellow-50 text-yellow-700 border-yellow-200">Terlambat</span>}
-                      {a.isOvertime && a.overtimeStatus === 'PENDING' && (
-                        <span className="badge bg-yellow-50 text-yellow-700 border-yellow-200">Lembur (Menunggu)</span>
-                      )}
-                      {a.isOvertime && a.overtimeStatus === 'APPROVED' && (
-                        <span className="badge bg-purple-50 text-purple-700 border-purple-200">Lembur (Disetujui)</span>
-                      )}
-                      {a.isOvertime && a.overtimeStatus === 'REJECTED' && (
-                        <span className="badge bg-red-50 text-red-700 border-red-200">Lembur (Ditolak)</span>
-                      )}
+                      {a.isOvertime && a.overtimeStatus === 'PENDING' && <span className="badge bg-yellow-50 text-yellow-700 border-yellow-200">Lembur (Menunggu)</span>}
+                      {a.isOvertime && a.overtimeStatus === 'APPROVED' && <span className="badge bg-purple-50 text-purple-700 border-purple-200">Lembur (Disetujui)</span>}
+                      {a.isOvertime && a.overtimeStatus === 'REJECTED' && <span className="badge bg-red-50 text-red-700 border-red-200">Lembur (Ditolak)</span>}
+                      {a.notes?.includes('Izin pulang awal') && <span className="badge bg-blue-50 text-blue-700 border-blue-200">Izin Pulang Awal</span>}
                     </div>
                     <div className="flex gap-4 mt-1.5 text-sm text-slate-600">
                       <span>Masuk: <strong>{a.checkIn ? formatTime(a.checkIn) : '-'}</strong></span>
                       <span>Pulang: <strong>{a.checkOut ? formatTime(a.checkOut) : '-'}</strong></span>
                     </div>
+                    {a.notes && <p className="text-xs text-slate-400 mt-1 truncate">{a.notes}</p>}
                   </div>
                 </div>
               </div>
             ))
           )}
+        </div>
+      )}
+
+      {/* Early Leave Request Modal */}
+      {showEarlyLeaveModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md animate-slide-up">
+            <div className="border-b border-gray-100 px-6 py-4 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-slate-900">Ajukan Izin Pulang Awal</h2>
+              <button onClick={() => setShowEarlyLeaveModal(false)} className="btn-ghost p-1.5"><X size={18} /></button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="flex items-start gap-2 p-3 bg-blue-50 rounded-xl text-sm text-blue-700">
+                <AlertTriangle size={15} className="flex-shrink-0 mt-0.5" />
+                <p>Pengajuan akan langsung dikirim ke atasan Anda. Tombol absen pulang akan aktif setelah disetujui.</p>
+              </div>
+
+              <div>
+                <label className="label">Alasan *</label>
+                <textarea
+                  className="input"
+                  rows={3}
+                  value={earlyLeaveReason}
+                  onChange={e => setEarlyLeaveReason(e.target.value)}
+                  placeholder="Contoh: Anak sakit, harus ke dokter..."
+                  maxLength={300}
+                  autoFocus
+                />
+                <p className="text-xs text-slate-400 mt-1 text-right">{earlyLeaveReason.length}/300</p>
+              </div>
+
+              <div>
+                <label className="label">Estimasi Jam Pulang (opsional)</label>
+                <input
+                  type="time"
+                  className="input"
+                  value={earlyLeaveEstTime}
+                  onChange={e => setEarlyLeaveEstTime(e.target.value)}
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button onClick={() => setShowEarlyLeaveModal(false)} className="btn-secondary flex-1">Batal</button>
+                <button
+                  onClick={handleEarlyLeaveSubmit}
+                  disabled={submittingEarlyLeave || !earlyLeaveReason.trim()}
+                  className="btn-primary flex-1"
+                >
+                  <Save size={15} /> {submittingEarlyLeave ? 'Mengirim...' : 'Kirim Pengajuan'}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

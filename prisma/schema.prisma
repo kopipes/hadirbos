@@ -49,6 +49,8 @@ model User {
   overtimeReviews       OvertimeApproval[]   @relation("OvertimeReviewed")
   leaveRequests         LeaveRequest[]       @relation("LeaveUser")
   leaveReviews          LeaveRequest[]       @relation("LeaveReviewer")
+  earlyLeaves           EarlyLeave[]         @relation("EarlyLeaveUser")
+  earlyLeaveReviews     EarlyLeave[]         @relation("EarlyLeaveReviewer")
 
   @@index([role])
   @@index([department])
@@ -117,6 +119,7 @@ model Attendance {
 
   corrections     AttendanceCorrection[]
   overtimeApproval OvertimeApproval?
+  earlyLeave      EarlyLeave?
 
   @@unique([userId, date])
 }
@@ -166,6 +169,26 @@ model Department {
 
 // LeaveType: ANNUAL | SICK | MATERNITY | PATERNITY | PERMISSION | OTHER
 // LeaveStatus: PENDING | APPROVED | REJECTED | CANCELLED
+// EarlyLeaveStatus: PENDING | APPROVED | REJECTED
+model EarlyLeave {
+  id           String     @id @default(cuid())
+  userId       String
+  user         User       @relation("EarlyLeaveUser", fields: [userId], references: [id])
+  attendanceId String     @unique
+  attendance   Attendance @relation(fields: [attendanceId], references: [id])
+  reviewedById String?
+  reviewedBy   User?      @relation("EarlyLeaveReviewer", fields: [reviewedById], references: [id])
+  reason       String
+  estimatedOut String?    // "HH:mm" — estimated checkout time
+  status       String     @default("PENDING")
+  reviewNote   String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@index([userId])
+  @@index([status])
+}
+
 model LeaveRequest {
   id           String   @id @default(cuid())
   userId       String

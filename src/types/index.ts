@@ -12,6 +12,9 @@ export type NotificationType =
   | 'LEAVE_REQUEST'
   | 'LEAVE_APPROVED'
   | 'LEAVE_REJECTED'
+  | 'EARLY_LEAVE_REQUEST'
+  | 'EARLY_LEAVE_APPROVED'
+  | 'EARLY_LEAVE_REJECTED'
   | 'SYSTEM';
 
 export interface UserProfile {
