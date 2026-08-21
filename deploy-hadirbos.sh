@@ -146,6 +146,7 @@ WorkingDirectory=$APP_DIR
 EnvironmentFile=$APP_DIR/.env
 Environment=PORT=$PORT
 Environment=NODE_ENV=production
+Environment=TZ=Asia/Jakarta
 ExecStart=/usr/bin/node node_modules/.bin/next start -p $PORT
 Restart=on-failure
 RestartSec=5

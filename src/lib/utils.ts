@@ -1,7 +1,10 @@
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { format, parseISO } from 'date-fns';
+import { parseISO } from 'date-fns';
+import { formatInTimeZone, toZonedTime } from 'date-fns-tz';
 import { id as idLocale } from 'date-fns/locale';
+
+const TZ = 'Asia/Jakarta';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -10,49 +13,47 @@ export function cn(...inputs: ClassValue[]) {
 export function formatDate(date: Date | string, fmt = 'dd MMMM yyyy'): string {
   try {
     const d = typeof date === 'string' ? parseISO(date) : date;
-    return format(d, fmt, { locale: idLocale });
+    return formatInTimeZone(d, TZ, fmt, { locale: idLocale });
   } catch {
     return String(date);
   }
 }
 
-export function formatTime(date: Date | string | null | undefined): string {
-  if (!date) return '-';
+export function formatTime(date: Date | string | number | null | undefined): string {
+  if (date === null || date === undefined) return '-';
   try {
-    const d = typeof date === 'string' ? new Date(date) : date;
+    const d = typeof date === 'number' ? new Date(date)
+            : typeof date === 'string' ? new Date(date)
+            : date;
     if (isNaN(d.getTime())) return '-';
-    return format(d, 'HH:mm');
+    return formatInTimeZone(d, TZ, 'HH:mm');
   } catch {
     return '-';
   }
 }
 
-export function formatDateTime(date: Date | string | null | undefined): string {
-  if (!date) return '-';
+export function formatDateTime(date: Date | string | number | null | undefined): string {
+  if (date === null || date === undefined) return '-';
   try {
-    const d = typeof date === 'string' ? new Date(date) : date;
+    const d = typeof date === 'number' ? new Date(date)
+            : typeof date === 'string' ? new Date(date)
+            : date;
     if (isNaN(d.getTime())) return '-';
-    return format(d, 'dd MMM yyyy, HH:mm', { locale: idLocale });
+    return formatInTimeZone(d, TZ, 'dd MMM yyyy, HH:mm', { locale: idLocale });
   } catch {
     return '-';
   }
 }
 
+/** Returns today's date as YYYY-MM-DD in WIB (Asia/Jakarta) */
 export function getTodayString(): string {
-  // Returns local date YYYY-MM-DD using system timezone
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, '0');
-  const d = String(now.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
+  return formatInTimeZone(new Date(), TZ, 'yyyy-MM-dd');
 }
 
 /** Calculate distance between two lat/lng points in meters (Haversine) */
 export function calculateDistance(
-  lat1: number,
-  lng1: number,
-  lat2: number,
-  lng2: number
+  lat1: number, lng1: number,
+  lat2: number, lng2: number
 ): number {
   const R = 6371000;
   const toRad = (deg: number) => (deg * Math.PI) / 180;
@@ -64,12 +65,9 @@ export function calculateDistance(
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-/** Check if employee is within allowed radius */
 export function isWithinRadius(
-  userLat: number,
-  userLng: number,
-  officeLat: number,
-  officeLng: number,
+  userLat: number, userLng: number,
+  officeLat: number, officeLng: number,
   radiusMeters: number
 ): boolean {
   return calculateDistance(userLat, userLng, officeLat, officeLng) <= radiusMeters;
@@ -77,41 +75,40 @@ export function isWithinRadius(
 
 /**
  * Calculate how many minutes late a check-in is.
- * Returns 0 if on time or within grace period.
+ * scheduledTime is "HH:mm" in WIB.
  */
 export function calculateLateMinutes(
   checkInTime: Date,
-  scheduledTime: string, // "HH:mm"
-  gracePeriod: number    // minutes
+  scheduledTime: string,
+  gracePeriod: number
 ): number {
   const [h, m] = scheduledTime.split(':').map(Number);
-  // Build scheduled datetime on same local date as checkInTime
-  const scheduled = new Date(checkInTime);
+  const zoned = toZonedTime(checkInTime, TZ);
+  const scheduled = new Date(zoned);
   scheduled.setHours(h, m, 0, 0);
 
   const graceEnd = scheduled.getTime() + gracePeriod * 60_000;
-  if (checkInTime.getTime() <= graceEnd) return 0;
-
-  return Math.floor((checkInTime.getTime() - scheduled.getTime()) / 60_000);
+  if (zoned.getTime() <= graceEnd) return 0;
+  return Math.floor((zoned.getTime() - scheduled.getTime()) / 60_000);
 }
 
 /**
  * Calculate overtime minutes after checkout.
- * Returns 0 if checked out before or within overtimeAfter threshold.
+ * scheduledTime is "HH:mm" in WIB.
  */
 export function calculateOvertimeMinutes(
   checkOutTime: Date,
-  scheduledTime: string, // "HH:mm"
-  overtimeAfter: number  // minutes buffer before counting as OT
+  scheduledTime: string,
+  overtimeAfter: number
 ): number {
   const [h, m] = scheduledTime.split(':').map(Number);
-  const scheduled = new Date(checkOutTime);
+  const zoned = toZonedTime(checkOutTime, TZ);
+  const scheduled = new Date(zoned);
   scheduled.setHours(h, m, 0, 0);
 
   const threshold = scheduled.getTime() + overtimeAfter * 60_000;
-  if (checkOutTime.getTime() <= threshold) return 0;
-
-  return Math.floor((checkOutTime.getTime() - scheduled.getTime()) / 60_000);
+  if (zoned.getTime() <= threshold) return 0;
+  return Math.floor((zoned.getTime() - scheduled.getTime()) / 60_000);
 }
 
 export function getRoleBadgeColor(role: string): string {
