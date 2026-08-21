@@ -24,6 +24,8 @@ export default function ReportsPage() {
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [selected, setSelected] = useState<Attendance | null>(null);
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 20;
 
   async function loadReport() {
     setLoading(true);
@@ -69,11 +71,20 @@ export default function ReportsPage() {
     }
   }
 
-  const filtered = useMemo(() => attendances.filter((a) =>
-    !search ||
-    a.user?.name?.toLowerCase().includes(search.toLowerCase()) ||
-    a.user?.nik?.toLowerCase().includes(search.toLowerCase())
-  ), [attendances, search]);
+  // Reset page when search/data changes
+  const filtered = useMemo(() => {
+    setPage(1);
+    return attendances
+      .filter((a) =>
+        !search ||
+        a.user?.name?.toLowerCase().includes(search.toLowerCase()) ||
+        a.user?.nik?.toLowerCase().includes(search.toLowerCase())
+      )
+      .sort((a, b) => b.date.localeCompare(a.date)); // terbaru di atas
+  }, [attendances, search]);
+
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+  const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   return (
     <div className="space-y-5 max-w-6xl mx-auto">
@@ -171,7 +182,7 @@ export default function ReportsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {filtered.map((a) => (
+                {paginated.map((a) => (
                   <tr
                     key={a.id}
                     onClick={() => setSelected(a)}
@@ -222,6 +233,59 @@ export default function ReportsPage() {
           </div>
         )}
       </div>
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-slate-500">
+            Menampilkan {((page - 1) * PAGE_SIZE) + 1}–{Math.min(page * PAGE_SIZE, filtered.length)} dari {filtered.length} data
+          </p>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setPage(1)}
+              disabled={page === 1}
+              className="btn-secondary btn-sm px-2 py-1.5 disabled:opacity-40"
+            >«</button>
+            <button
+              onClick={() => setPage(p => Math.max(1, p - 1))}
+              disabled={page === 1}
+              className="btn-secondary btn-sm disabled:opacity-40"
+            >‹ Prev</button>
+            <div className="flex items-center gap-1">
+              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                // Show pages around current page
+                let pageNum: number;
+                if (totalPages <= 5) pageNum = i + 1;
+                else if (page <= 3) pageNum = i + 1;
+                else if (page >= totalPages - 2) pageNum = totalPages - 4 + i;
+                else pageNum = page - 2 + i;
+                return (
+                  <button
+                    key={pageNum}
+                    onClick={() => setPage(pageNum)}
+                    className={cn(
+                      'w-8 h-8 rounded-lg text-sm font-semibold transition-all',
+                      page === pageNum
+                        ? 'bg-sky-500 text-white'
+                        : 'bg-white border border-gray-200 text-slate-600 hover:border-sky-300'
+                    )}
+                  >{pageNum}</button>
+                );
+              })}
+            </div>
+            <button
+              onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+              disabled={page === totalPages}
+              className="btn-secondary btn-sm disabled:opacity-40"
+            >Next ›</button>
+            <button
+              onClick={() => setPage(totalPages)}
+              disabled={page === totalPages}
+              className="btn-secondary btn-sm px-2 py-1.5 disabled:opacity-40"
+            >»</button>
+          </div>
+        </div>
+      )}
 
       {/* Detail Modal */}
       {selected && (
