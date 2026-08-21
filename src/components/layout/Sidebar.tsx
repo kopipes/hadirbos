@@ -4,7 +4,8 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, Clock, Users, BarChart3, Settings,
-  Fingerprint, CalendarDays, MapPin, Bell, LogOut, ChevronRight, Building2, Timer, Palmtree, ArrowLeftFromLine
+  Fingerprint, CalendarDays, MapPin, Bell, LogOut, ChevronRight,
+  Building2, Timer, Palmtree, ArrowLeftFromLine, Edit2
 } from 'lucide-react';
 import { cn, getRoleLabel, getRoleBadgeColor } from '@/lib/utils';
 import type { JWTPayload } from '@/lib/auth';
@@ -24,6 +25,7 @@ const navItems: NavItem[] = [
   { href: '/overtime', label: 'Approval Lembur', icon: Timer, roles: ['ADMIN', 'MANAGER', 'SPV'] },
   { href: '/leave/approval', label: 'Approval Cuti', icon: CalendarDays, roles: ['ADMIN', 'MANAGER', 'SPV'] },
   { href: '/early-leave', label: 'Approval Pulang Awal', icon: ArrowLeftFromLine, roles: ['ADMIN', 'MANAGER', 'SPV'] },
+  { href: '/corrections', label: 'Koreksi Absen', icon: Edit2, roles: ['ADMIN', 'MANAGER', 'SPV'] },
   { href: '/reports', label: 'Laporan', icon: BarChart3, roles: ['ADMIN', 'MANAGER', 'SPV'] },
   { href: '/admin/users', label: 'Kelola Karyawan', icon: Users, roles: ['ADMIN'] },
   { href: '/admin/departments', label: 'Departemen', icon: Building2, roles: ['ADMIN'] },
