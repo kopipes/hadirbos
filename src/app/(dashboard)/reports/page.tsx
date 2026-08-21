@@ -1,14 +1,14 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { Download, Search, BarChart3, Filter, TrendingUp, AlertCircle, CheckCircle2, Clock } from 'lucide-react';
+import { useEffect, useState, useMemo } from 'react';
+import { Download, Search, BarChart3, Filter, MapPin, X, ExternalLink, Camera } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { cn, formatDate, formatTime, getStatusBadgeColor, getStatusLabel } from '@/lib/utils';
+import { cn, formatDate, formatTime, getStatusBadgeColor, getStatusLabel, formatMinutes } from '@/lib/utils';
 import type { Attendance } from '@/types';
 
 interface Stats {
   total: number; present: number; absent: number;
-  leave: number; late: number; overtime: number; outOfRadius: number;
+  leave: number; late: number; overtime: number; outOfRadius: number; overtimePending: number;
 }
 
 export default function ReportsPage() {
@@ -23,20 +23,26 @@ export default function ReportsPage() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [selected, setSelected] = useState<Attendance | null>(null);
 
   async function loadReport() {
     setLoading(true);
-    const params = new URLSearchParams({ startDate, endDate });
-    if (department) params.set('department', department);
-    const res = await fetch(`/api/reports?${params}`);
-    const data = await res.json();
-    if (data.success) {
-      setAttendances(data.data.attendances);
-      setStats(data.data.stats);
-    } else {
-      toast.error(data.error || 'Gagal memuat laporan.');
+    try {
+      const params = new URLSearchParams({ startDate, endDate });
+      if (department) params.set('department', department);
+      const res = await fetch(`/api/reports?${params}`);
+      const data = await res.json();
+      if (data.success) {
+        setAttendances(data.data.attendances);
+        setStats(data.data.stats);
+      } else {
+        toast.error(data.error || 'Gagal memuat laporan.');
+      }
+    } catch {
+      toast.error('Gagal terhubung ke server.');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   useEffect(() => { loadReport(); }, []);
@@ -63,11 +69,11 @@ export default function ReportsPage() {
     }
   }
 
-  const filtered = attendances.filter((a) =>
+  const filtered = useMemo(() => attendances.filter((a) =>
     !search ||
     a.user?.name?.toLowerCase().includes(search.toLowerCase()) ||
     a.user?.nik?.toLowerCase().includes(search.toLowerCase())
-  );
+  ), [attendances, search]);
 
   return (
     <div className="space-y-5 max-w-6xl mx-auto">
@@ -104,14 +110,14 @@ export default function ReportsPage() {
       {stats && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {[
-            { label: 'Total Records', value: stats.total, color: 'text-slate-700 bg-gray-100' },
-            { label: 'Hadir', value: stats.present, color: 'text-green-700 bg-green-50' },
-            { label: 'Terlambat', value: stats.late, color: 'text-yellow-700 bg-yellow-50' },
-            { label: 'Tidak Hadir', value: stats.absent, color: 'text-red-700 bg-red-50' },
-            { label: 'Cuti', value: stats.leave, color: 'text-blue-700 bg-blue-50' },
-            { label: 'Lembur', value: stats.overtime, color: 'text-purple-700 bg-purple-50' },
-            { label: 'Luar Radius', value: stats.outOfRadius, color: 'text-orange-700 bg-orange-50' },
-            { label: '% Kehadiran', value: stats.total ? Math.round((stats.present / stats.total) * 100) + '%' : '-', color: 'text-brand-700 bg-brand-50' },
+            { label: 'Total Records',  value: stats.total,       color: 'text-slate-700 bg-gray-100' },
+            { label: 'Hadir',          value: stats.present,     color: 'text-green-700 bg-green-50' },
+            { label: 'Terlambat',      value: stats.late,        color: 'text-yellow-700 bg-yellow-50' },
+            { label: 'Tidak Hadir',    value: stats.absent,      color: 'text-red-700 bg-red-50' },
+            { label: 'Cuti',           value: stats.leave,       color: 'text-blue-700 bg-blue-50' },
+            { label: 'Lembur Disetujui', value: stats.overtime,  color: 'text-purple-700 bg-purple-50' },
+            { label: 'Luar Radius',    value: stats.outOfRadius, color: 'text-orange-700 bg-orange-50' },
+            { label: '% Kehadiran',    value: stats.total ? Math.round((stats.present / stats.total) * 100) + '%' : '-', color: 'text-sky-700 bg-sky-50' },
           ].map((s) => (
             <div key={s.label} className={cn('rounded-xl px-4 py-3', s.color)}>
               <p className="text-2xl font-bold">{s.value}</p>
@@ -132,6 +138,11 @@ export default function ReportsPage() {
           onChange={(e) => setSearch(e.target.value)}
         />
       </div>
+
+      {/* Hint */}
+      {filtered.length > 0 && (
+        <p className="text-xs text-slate-400 -mt-2">Klik baris untuk melihat detail foto & lokasi GPS</p>
+      )}
 
       {/* Table */}
       <div className="card p-0 overflow-hidden">
@@ -154,40 +165,55 @@ export default function ReportsPage() {
                   <th className="text-left px-4 py-3">Masuk</th>
                   <th className="text-left px-4 py-3">Pulang</th>
                   <th className="text-left px-4 py-3">Status</th>
-                  <th className="text-left px-4 py-3">Keterlambatan</th>
+                  <th className="text-left px-4 py-3">Terlambat</th>
                   <th className="text-left px-4 py-3">Lembur</th>
+                  <th className="text-left px-4 py-3">Lokasi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {filtered.map((a) => (
-                  <tr key={a.id} className="hover:bg-gray-50 transition-colors">
+                  <tr
+                    key={a.id}
+                    onClick={() => setSelected(a)}
+                    className="hover:bg-sky-50 transition-colors cursor-pointer"
+                  >
                     <td className="px-5 py-2.5">
                       <p className="font-semibold text-slate-800">{a.user?.name}</p>
                       <p className="text-xs text-slate-400">{a.user?.nik} · {a.user?.department}</p>
                     </td>
-                    <td className="px-4 py-2.5 text-slate-600">
-                      {formatDate(a.date, 'dd MMM yyyy')}
-                    </td>
-                    <td className="px-4 py-2.5 font-semibold text-slate-800">
-                      {a.checkIn ? formatTime(a.checkIn) : '-'}
-                    </td>
-                    <td className="px-4 py-2.5 font-semibold text-slate-800">
-                      {a.checkOut ? formatTime(a.checkOut) : '-'}
+                    <td className="px-4 py-2.5 text-slate-600">{formatDate(a.date, 'dd MMM yyyy')}</td>
+                    <td className="px-4 py-2.5 font-semibold text-slate-800">{a.checkIn ? formatTime(a.checkIn) : '-'}</td>
+                    <td className="px-4 py-2.5 font-semibold text-slate-800">{a.checkOut ? formatTime(a.checkOut) : '-'}</td>
+                    <td className="px-4 py-2.5">
+                      <div className="flex flex-col gap-1">
+                        <span className={cn('badge w-fit', getStatusBadgeColor(a.status))}>
+                          {getStatusLabel(a.status)}
+                        </span>
+                        {a.isOutOfRadius && (
+                          <span className="badge w-fit bg-orange-50 text-orange-600 border-orange-200 text-xs">
+                            <MapPin size={10} /> Luar Radius
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-2.5">
-                      <span className={cn('badge', getStatusBadgeColor(a.status))}>
-                        {getStatusLabel(a.status)}
-                      </span>
+                      {a.isLate
+                        ? <span className="text-yellow-700 font-semibold">{a.lateMinutes} mnt</span>
+                        : <span className="text-slate-400">-</span>}
                     </td>
                     <td className="px-4 py-2.5">
-                      {a.isLate ? (
-                        <span className="text-yellow-700 font-semibold">{a.lateMinutes} mnt</span>
-                      ) : <span className="text-slate-400">-</span>}
+                      {a.isOvertime
+                        ? <span className={cn('font-semibold', a.overtimeStatus === 'APPROVED' ? 'text-purple-700' : a.overtimeStatus === 'REJECTED' ? 'text-red-400 line-through' : 'text-yellow-600')}>
+                            {a.overtimeMinutes} mnt
+                          </span>
+                        : <span className="text-slate-400">-</span>}
                     </td>
                     <td className="px-4 py-2.5">
-                      {a.isOvertime ? (
-                        <span className="text-purple-700 font-semibold">{a.overtimeMinutes} mnt</span>
-                      ) : <span className="text-slate-400">-</span>}
+                      {a.checkInLat
+                        ? <span className="flex items-center gap-1 text-sky-600 text-xs font-medium">
+                            <MapPin size={12} /> Ada
+                          </span>
+                        : <span className="text-slate-400 text-xs">-</span>}
                     </td>
                   </tr>
                 ))}
@@ -196,6 +222,151 @@ export default function ReportsPage() {
           </div>
         )}
       </div>
+
+      {/* Detail Modal */}
+      {selected && (
+        <div
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setSelected(null); }}
+        >
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto animate-slide-up">
+            {/* Header */}
+            <div className="sticky top-0 bg-white border-b border-gray-100 px-6 py-4 flex items-center justify-between rounded-t-3xl">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">{selected.user?.name}</h2>
+                <p className="text-sm text-slate-500">{formatDate(selected.date, 'EEEE, dd MMMM yyyy')}</p>
+              </div>
+              <button onClick={() => setSelected(null)} className="btn-ghost p-1.5" aria-label="Tutup">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-5">
+              {/* Basic info */}
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <InfoBox label="Jam Masuk" value={selected.checkIn ? formatTime(selected.checkIn) : '-'} />
+                <InfoBox label="Jam Pulang" value={selected.checkOut ? formatTime(selected.checkOut) : '-'} />
+                <InfoBox label="Status" value={getStatusLabel(selected.status)} />
+                <InfoBox label="Terlambat" value={selected.isLate ? formatMinutes(selected.lateMinutes) : 'Tidak'} />
+                <InfoBox label="Lembur" value={selected.isOvertime ? `${formatMinutes(selected.overtimeMinutes)} (${selected.overtimeStatus})` : 'Tidak'} />
+                <InfoBox label="Luar Radius" value={selected.isOutOfRadius ? 'Ya' : 'Tidak'} highlight={selected.isOutOfRadius} />
+              </div>
+
+              {/* Check-in location */}
+              {(selected.checkInLat || selected.checkInAddress) && (
+                <div>
+                  <h3 className="text-sm font-bold text-slate-700 mb-2 flex items-center gap-1.5">
+                    <MapPin size={14} className="text-sky-500" /> Lokasi Masuk
+                  </h3>
+                  <div className="bg-gray-50 rounded-xl p-3 space-y-2">
+                    {selected.checkInAddress && (
+                      <p className="text-sm text-slate-700">{selected.checkInAddress}</p>
+                    )}
+                    {selected.checkInLat && selected.checkInLng && (
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs text-slate-500 font-mono">
+                          {selected.checkInLat.toFixed(6)}, {selected.checkInLng.toFixed(6)}
+                        </p>
+                        <a
+                          href={`https://www.google.com/maps?q=${selected.checkInLat},${selected.checkInLng}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="btn-secondary btn-sm text-xs"
+                          onClick={e => e.stopPropagation()}
+                        >
+                          <ExternalLink size={12} /> Google Maps
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Check-out location */}
+              {(selected.checkOutLat || selected.checkOutAddress) && (
+                <div>
+                  <h3 className="text-sm font-bold text-slate-700 mb-2 flex items-center gap-1.5">
+                    <MapPin size={14} className="text-green-500" /> Lokasi Pulang
+                  </h3>
+                  <div className="bg-gray-50 rounded-xl p-3 space-y-2">
+                    {selected.checkOutAddress && (
+                      <p className="text-sm text-slate-700">{selected.checkOutAddress}</p>
+                    )}
+                    {selected.checkOutLat && selected.checkOutLng && (
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs text-slate-500 font-mono">
+                          {selected.checkOutLat.toFixed(6)}, {selected.checkOutLng.toFixed(6)}
+                        </p>
+                        <a
+                          href={`https://www.google.com/maps?q=${selected.checkOutLat},${selected.checkOutLng}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="btn-secondary btn-sm text-xs"
+                          onClick={e => e.stopPropagation()}
+                        >
+                          <ExternalLink size={12} /> Google Maps
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Selfie photos */}
+              <div className="grid grid-cols-2 gap-4">
+                {selected.checkInPhoto && (
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-700 mb-2 flex items-center gap-1.5">
+                      <Camera size={14} className="text-sky-500" /> Foto Masuk
+                    </h3>
+                    <img
+                      src={selected.checkInPhoto}
+                      alt="Foto selfie masuk"
+                      className="w-full rounded-xl object-cover aspect-[3/4]"
+                    />
+                  </div>
+                )}
+                {selected.checkOutPhoto && (
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-700 mb-2 flex items-center gap-1.5">
+                      <Camera size={14} className="text-green-500" /> Foto Pulang
+                    </h3>
+                    <img
+                      src={selected.checkOutPhoto}
+                      alt="Foto selfie pulang"
+                      className="w-full rounded-xl object-cover aspect-[3/4]"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* No photo message */}
+              {!selected.checkInPhoto && !selected.checkOutPhoto && (
+                <div className="flex items-center gap-2 text-slate-400 text-sm bg-gray-50 rounded-xl p-3">
+                  <Camera size={16} />
+                  <span>Tidak ada foto tersimpan</span>
+                </div>
+              )}
+
+              {selected.notes && (
+                <div>
+                  <h3 className="text-sm font-bold text-slate-700 mb-1">Catatan</h3>
+                  <p className="text-sm text-slate-600 bg-gray-50 rounded-xl p-3">{selected.notes}</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InfoBox({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
+  return (
+    <div className="bg-gray-50 rounded-xl px-3 py-2.5">
+      <p className="text-xs text-slate-500 mb-0.5">{label}</p>
+      <p className={cn('text-sm font-semibold', highlight ? 'text-orange-600' : 'text-slate-800')}>{value}</p>
     </div>
   );
 }
