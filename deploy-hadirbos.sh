@@ -93,9 +93,14 @@ if [ ! -f "$APP_DIR/.env" ]; then
   echo "   WARNING: No .env found."
   if [ -f "$APP_DIR/.env.example" ]; then
     cp "$APP_DIR/.env.example" "$APP_DIR/.env"
+    # Use absolute DB path to avoid ambiguity
+    sed -i "s|DATABASE_URL=file:./prisma/dev.db|DATABASE_URL=file:$APP_DIR/prisma/dev.db|" "$APP_DIR/.env"
     echo "   Created .env from .env.example — edit it before redeploying!"
   fi
 fi
+
+# Ensure DATABASE_URL is always absolute path
+sudo bash -c "sed -i 's|DATABASE_URL=file:./prisma/dev.db|DATABASE_URL=file:$APP_DIR/prisma/dev.db|' $APP_DIR/.env" 2>/dev/null || true
 
 # 5. Install all dependencies (devDeps needed for Next.js build)
 echo "4. Installing dependencies..."
