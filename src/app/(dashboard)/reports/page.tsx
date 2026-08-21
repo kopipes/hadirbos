@@ -21,11 +21,20 @@ export default function ReportsPage() {
   const [search, setSearch] = useState('');
   const [attendances, setAttendances] = useState<Attendance[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
+  const [departments, setDepartments] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [selected, setSelected] = useState<Attendance | null>(null);
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 20;
+
+  // Load departments from master data
+  useEffect(() => {
+    fetch('/api/departments')
+      .then(r => r.json())
+      .then(d => { if (d.success) setDepartments(d.data.map((dept: { name: string }) => dept.name)); })
+      .catch(() => {});
+  }, []);
 
   async function loadReport() {
     setLoading(true);
@@ -109,7 +118,12 @@ export default function ReportsPage() {
           </div>
           <div>
             <label className="label">Departemen</label>
-            <input type="text" className="input" placeholder="Semua" value={department} onChange={(e) => setDepartment(e.target.value)} />
+            <select className="input" value={department} onChange={(e) => setDepartment(e.target.value)}>
+              <option value="">Semua Departemen</option>
+              {departments.map(d => (
+                <option key={d} value={d}>{d}</option>
+              ))}
+            </select>
           </div>
           <button onClick={loadReport} disabled={loading} className="btn-primary self-end">
             <Filter size={15} /> {loading ? 'Memuat...' : 'Tampilkan'}
