@@ -134,7 +134,8 @@ model OvertimeApproval {
   reviewedById  String?
   reviewedBy   User?      @relation("OvertimeReviewed", fields: [reviewedById], references: [id])
   overtimeMinutes Int
-  status       String     @default("PENDING") // PENDING | APPROVED | REJECTED
+  reason       String?    // employee's reason for overtime
+  status       String     @default("PENDING")
   notes        String?    // reviewer notes
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt

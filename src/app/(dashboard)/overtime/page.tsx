@@ -168,7 +168,12 @@ export default function OvertimePage() {
 
                     {req.notes && (
                       <p className="text-xs text-slate-500 mt-1.5 bg-gray-50 px-2.5 py-1.5 rounded-lg">
-                        Catatan: {req.notes}
+                        Catatan reviewer: {req.notes}
+                      </p>
+                    )}
+                    {(req as OvertimeRequest & { reason?: string }).reason && (
+                      <p className="text-xs text-purple-600 mt-1.5 bg-purple-50 px-2.5 py-1.5 rounded-lg">
+                        Alasan lembur: {(req as OvertimeRequest & { reason?: string }).reason}
                       </p>
                     )}
                     {req.reviewedBy && (

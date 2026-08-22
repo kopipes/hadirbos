@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { type, photo, latitude, longitude, address } = body;
+    const { type, photo, latitude, longitude, address, reason } = body;
 
     // Input validation
     if (!type || !['checkin', 'checkout'].includes(type)) {
@@ -204,6 +204,7 @@ export async function POST(req: NextRequest) {
               attendanceId: attendance.id,
               requestedById: authUser.userId,
               overtimeMinutes,
+              reason: reason?.trim() || null,
               status: 'PENDING',
             },
           }),
@@ -211,7 +212,7 @@ export async function POST(req: NextRequest) {
             data: {
               type: 'OVERTIME',
               title: 'Pengajuan Lembur',
-              message: `${user.name} lembur ${overtimeMinutes} menit (pulang pukul ${now.toTimeString().slice(0, 5)}). Menunggu persetujuan Anda.`,
+              message: `${user.name} lembur ${overtimeMinutes} menit (pulang pukul ${now.toTimeString().slice(0, 5)})${reason ? `. Alasan: ${reason.trim()}` : ''}. Menunggu persetujuan Anda.`,
               recipientId: user.managerId,
               senderId: authUser.userId,
             },

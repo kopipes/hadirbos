@@ -42,6 +42,11 @@ export default function AttendancePage() {
   const [correctionForm, setCorrectionForm] = useState({ newCheckIn: '', newCheckOut: '', reason: '' });
   const [submittingCorrection, setSubmittingCorrection] = useState(false);
 
+  // Overtime reason state
+  const [showOvertimeReasonModal, setShowOvertimeReasonModal] = useState(false);
+  const [overtimeReason, setOvertimeReason] = useState('');
+  const [pendingCheckout, setPendingCheckout] = useState(false);
+
   const webcamRef = useRef<Webcam>(null);
 
   const loadTodayAttendance = useCallback(async () => {
@@ -151,22 +156,47 @@ export default function AttendancePage() {
   const canCheckOut = !!(todayAttendance?.checkIn && !todayAttendance?.checkOut &&
     (!isEarlyCheckout() || earlyLeaveApproved || !hasSchedule));
 
-  async function handleAttendance(type: 'checkin' | 'checkout') {
+  async function handleAttendance(type: 'checkin' | 'checkout', overtimeReasonText?: string) {
     if (!location) { toast.error('Lokasi belum terdeteksi. Tap "Perbarui Lokasi".'); return; }
     if (!webcamRef.current) { toast.error('Kamera belum siap.'); return; }
     const photo = webcamRef.current.getScreenshot();
     if (!photo) { toast.error('Gagal mengambil foto. Pastikan kamera aktif.'); return; }
+
+    // If checkout and will be overtime, show reason modal first
+    if (type === 'checkout' && hasSchedule && isEarlyCheckout() === false) {
+      // Check if this checkout will trigger overtime
+      const now = new Date();
+      const [h, m] = scheduleEndTime.split(':').map(Number);
+      const schedEnd = new Date(now);
+      schedEnd.setHours(h, m, 0, 0);
+      const thresholdMs = schedEnd.getTime() + 30 * 60_000; // default 30 min
+      const willBeOvertime = now.getTime() > thresholdMs;
+
+      if (willBeOvertime && overtimeReasonText === undefined) {
+        // Show modal to collect reason
+        setShowOvertimeReasonModal(true);
+        return;
+      }
+    }
 
     setLoading(true);
     try {
       const res = await fetch('/api/attendances', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type, photo, latitude: location.lat, longitude: location.lng, address: location.address }),
+        body: JSON.stringify({
+          type, photo,
+          latitude: location.lat,
+          longitude: location.lng,
+          address: location.address,
+          reason: overtimeReasonText || undefined,
+        }),
       });
       const data = await res.json();
       if (!res.ok || !data.success) { toast.error(data.error || 'Absen gagal.'); return; }
       toast.success(type === 'checkin' ? 'Absen masuk berhasil!' : 'Absen pulang berhasil!');
+      setShowOvertimeReasonModal(false);
+      setOvertimeReason('');
       await loadTodayAttendance();
     } catch {
       toast.error('Gagal terhubung ke server.');
@@ -490,6 +520,55 @@ export default function AttendancePage() {
               </div>
             ))
           )}
+        </div>
+      )}
+
+      {/* Overtime Reason Modal */}
+      {showOvertimeReasonModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md animate-slide-up">
+            <div className="border-b border-gray-100 px-6 py-4 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">Keterangan Lembur</h2>
+                <p className="text-sm text-slate-500">Anda pulang melebihi jam kerja</p>
+              </div>
+              <button onClick={() => setShowOvertimeReasonModal(false)} className="btn-ghost p-1.5"><X size={18} /></button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="flex items-start gap-2 p-3 bg-purple-50 rounded-xl text-sm text-purple-700">
+                <AlertTriangle size={15} className="flex-shrink-0 mt-0.5" />
+                <p>Lembur Anda akan otomatis diajukan ke atasan untuk disetujui. Isi alasan lembur agar atasan bisa memproses dengan lebih cepat.</p>
+              </div>
+              <div>
+                <label className="label">Alasan Lembur (opsional)</label>
+                <textarea
+                  className="input"
+                  rows={3}
+                  value={overtimeReason}
+                  onChange={e => setOvertimeReason(e.target.value)}
+                  placeholder="Contoh: Menyelesaikan laporan bulanan, meeting dengan klien..."
+                  maxLength={300}
+                  autoFocus
+                />
+                <p className="text-xs text-slate-400 mt-1 text-right">{overtimeReason.length}/300</p>
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => setShowOvertimeReasonModal(false)}
+                  className="btn-secondary flex-1"
+                >
+                  Batal
+                </button>
+                <button
+                  onClick={() => handleAttendance('checkout', overtimeReason)}
+                  disabled={loading}
+                  className="btn-primary flex-1"
+                >
+                  {loading ? <><Loader2 size={15} className="animate-spin" /> Memproses...</> : 'Absen Pulang'}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
