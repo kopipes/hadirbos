@@ -118,27 +118,31 @@ model Attendance {
   updatedAt       DateTime @updatedAt
 
   corrections     AttendanceCorrection[]
-  overtimeApproval OvertimeApproval?
+  overtimeApprovals OvertimeApproval[]
   earlyLeave      EarlyLeave?
 
   @@unique([userId, date])
 }
 
-// OvertimeStatus: NONE | PENDING | APPROVED | REJECTED
+// OvertimeStatus: NONE | PENDING | APPROVED | REJECTED | PARTIAL
+// OvertimeType: CHECKOUT_LATE | CHECKIN_EARLY
 model OvertimeApproval {
   id           String     @id @default(cuid())
-  attendanceId String     @unique
+  attendanceId String
   attendance   Attendance @relation(fields: [attendanceId], references: [id])
   requestedById String
   requestedBy  User       @relation("OvertimeRequested", fields: [requestedById], references: [id])
   reviewedById  String?
   reviewedBy   User?      @relation("OvertimeReviewed", fields: [reviewedById], references: [id])
   overtimeMinutes Int
+  overtimeType String     @default("CHECKOUT_LATE") // CHECKOUT_LATE | CHECKIN_EARLY
   reason       String?    // employee's reason for overtime
   status       String     @default("PENDING")
   notes        String?    // reviewer notes
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
+
+  @@index([attendanceId])
 }
 
 model AttendanceCorrection {

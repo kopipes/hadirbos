@@ -237,6 +237,7 @@ export async function POST(req: NextRequest) {
               attendanceId: attendance.id,
               requestedById: authUser.userId,
               overtimeMinutes,
+              overtimeType: 'CHECKOUT_LATE',
               reason: reason?.trim() || null,
               status: 'PENDING',
             },

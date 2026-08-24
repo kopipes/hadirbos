@@ -26,31 +26,59 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       return badRequest('Lembur ini sudah diproses. Hanya ADMIN yang dapat mengubah keputusan.');
     }
 
-    // Wrap all mutations in a transaction to prevent partial updates
-    await prisma.$transaction([
-      prisma.overtimeApproval.update({
-        where: { id: params.id },
-        data: { status, reviewedById: authUser.userId, notes: notes?.trim() || null },
-      }),
-      prisma.attendance.update({
-        where: { id: overtime.attendanceId },
-        data: {
-          overtimeStatus: status,
-          ...(status === 'REJECTED' ? { isOvertime: false, overtimeMinutes: 0 } : {}),
-        },
-      }),
-      prisma.notification.create({
-        data: {
-          type: status === 'APPROVED' ? 'OVERTIME' : 'SYSTEM',
-          title: status === 'APPROVED' ? 'Lembur Disetujui' : 'Lembur Ditolak',
-          message: status === 'APPROVED'
-            ? `Lembur Anda pada tanggal ${overtime.attendance.date} (${overtime.overtimeMinutes} menit) telah disetujui.`
-            : `Lembur Anda pada tanggal ${overtime.attendance.date} ditolak.${notes ? ` Catatan: ${notes}` : ''}`,
-          recipientId: overtime.requestedById,
-          senderId: authUser.userId,
-        },
-      }),
-    ]);
+    // Update this approval record
+    await prisma.overtimeApproval.update({
+      where: { id: params.id },
+      data: { status, reviewedById: authUser.userId, notes: notes?.trim() || null },
+    });
+
+    // Recalculate attendance overtime from all sibling approvals
+    const allApprovals = await prisma.overtimeApproval.findMany({
+      where: { attendanceId: overtime.attendanceId },
+    });
+
+    const approvedMinutes = allApprovals
+      .filter(a => a.id === params.id ? status === 'APPROVED' : a.status === 'APPROVED')
+      .reduce((sum, a) => sum + a.overtimeMinutes, 0);
+
+    const statuses = allApprovals.map(a => a.id === params.id ? status : a.status);
+    const hasApproved = statuses.some(s => s === 'APPROVED');
+    const hasRejected = statuses.some(s => s === 'REJECTED');
+    const hasPending = statuses.some(s => s === 'PENDING');
+
+    let overtimeStatus: string;
+    if (hasPending) {
+      overtimeStatus = 'PENDING';
+    } else if (hasApproved && hasRejected) {
+      overtimeStatus = 'PARTIAL';
+    } else if (hasApproved) {
+      overtimeStatus = 'APPROVED';
+    } else {
+      overtimeStatus = 'REJECTED';
+    }
+
+    await prisma.attendance.update({
+      where: { id: overtime.attendanceId },
+      data: {
+        overtimeStatus,
+        isOvertime: approvedMinutes > 0,
+        overtimeMinutes: approvedMinutes,
+      },
+    });
+
+    // Notify employee
+    const typeLabel = overtime.overtimeType === 'CHECKIN_EARLY' ? 'Datang Lebih Awal' : 'Pulang Terlambat';
+    await prisma.notification.create({
+      data: {
+        type: status === 'APPROVED' ? 'OVERTIME' : 'SYSTEM',
+        title: status === 'APPROVED' ? `Lembur Disetujui (${typeLabel})` : `Lembur Ditolak (${typeLabel})`,
+        message: status === 'APPROVED'
+          ? `Lembur ${typeLabel} Anda pada tanggal ${overtime.attendance.date} (${overtime.overtimeMinutes} menit) telah disetujui.`
+          : `Lembur ${typeLabel} Anda pada tanggal ${overtime.attendance.date} ditolak.${notes ? ` Catatan: ${notes}` : ''}`,
+        recipientId: overtime.requestedById,
+        senderId: authUser.userId,
+      },
+    });
 
     return ok(null, status === 'APPROVED' ? 'Lembur disetujui.' : 'Lembur ditolak.');
   } catch (error) {

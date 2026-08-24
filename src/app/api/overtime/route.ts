@@ -86,12 +86,12 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Check if overtime approval already exists for this attendance
-    const existing = await prisma.overtimeApproval.findUnique({
-      where: { attendanceId: attendance.id },
+    // Check if overtime approval already exists for this attendance AND type
+    const existing = await prisma.overtimeApproval.findFirst({
+      where: { attendanceId: attendance.id, overtimeType: resolvedType },
     });
     if (existing) {
-      return badRequest('Pengajuan lembur untuk tanggal ini sudah ada. Hubungi atasan untuk review ulang.');
+      return badRequest(`Pengajuan lembur ${resolvedType === 'CHECKIN_EARLY' ? 'datang lebih awal' : 'pulang terlambat'} untuk tanggal ini sudah ada. Hubungi atasan untuk review ulang.`);
     }
 
     // Reuse user data from attendance include
@@ -118,6 +118,7 @@ export async function POST(req: NextRequest) {
           attendanceId: attendance.id,
           requestedById: authUser.userId,
           overtimeMinutes,
+          overtimeType: resolvedType,
           reason: `[${typeLabel}] ${reason.trim()}`,
           status: 'PENDING',
         },
