@@ -15,8 +15,12 @@
 - **Self Check-in/Check-out** — Absen via kamera selfie + GPS langsung dari browser
 - **Verifikasi Lokasi** — Validasi radius kantor menggunakan Haversine formula
 - **Perhitungan Otomatis** — Keterlambatan dan lembur dihitung otomatis berdasarkan jadwal kerja
+- **Lembur dengan Approval** — Lembur otomatis saat checkout telat, atau diajukan manual via riwayat
+- **Dua Jenis Lembur** — Pulang Terlambat (`CHECKOUT_LATE`) dan Datang Lebih Awal (`CHECKIN_EARLY`), masing-masing approval terpisah
+- **Re-review Lembur** — Admin dapat override keputusan lembur yang sudah diproses
 - **Notifikasi Real-time** — Manajer/SPV mendapat notifikasi saat karyawan terlambat, luar radius, atau lembur
 - **Koreksi Absen** — Alur permintaan dan persetujuan koreksi absen
+- **Izin Pulang Awal** — Karyawan dapat mengajukan early leave dengan approval atasan
 - **Laporan & Export** — Filter laporan kehadiran dan export ke Excel (.xlsx)
 - **Multi-role** — Admin, Manager, SPV, dan Karyawan dengan akses berbeda
 - **Mobile-first** — Desain responsif dengan bottom navigation untuk penggunaan HP
@@ -42,17 +46,17 @@
 
 | Role | Akses |
 |---|---|
-| **Admin** | Kelola karyawan, kantor, jadwal kerja, hari libur, semua laporan, koreksi absen |
-| **Manager** | Pantau tim/departemen, terima notifikasi, koreksi absen anak buah |
-| **SPV** | Pantau tim kecil, terima notifikasi, koreksi absen anak buah |
-| **User** | Check-in/out, lihat riwayat pribadi |
+| **Admin** | Kelola karyawan, kantor, jadwal kerja, hari libur, semua laporan, koreksi absen, override lembur |
+| **Manager** | Pantau tim/departemen, approve/reject lembur & koreksi anak buah, terima notifikasi |
+| **SPV** | Pantau tim kecil, approve/reject lembur & koreksi anak buah, terima notifikasi |
+| **User** | Check-in/out, ajukan lembur manual, izin pulang awal, lihat riwayat pribadi |
 
 ---
 
 ## Instalasi & Menjalankan
 
 ### Prasyarat
-- Node.js 18+
+- Node.js >= 20.0.0
 - npm
 
 ### Langkah
@@ -64,6 +68,10 @@ cd hadirbos
 
 # Install dependencies
 npm install
+
+# Setup environment
+cp .env.example .env
+# Edit .env: set DATABASE_URL dan JWT_SECRET
 
 # Setup database
 npx prisma generate
@@ -80,19 +88,6 @@ Buka [http://localhost:3000](http://localhost:3000) di browser.
 
 ---
 
-## Akun Demo
-
-| Role | NIK | Password |
-|---|---|---|
-| Admin | `ADM001` | `admin123` |
-| Manager | `MGR001` | `manager123` |
-| SPV | `SPV001` | `spv123` |
-| Karyawan | `EMP001` | `user123` |
-
-> Login juga bisa menggunakan email atau nomor HP.
-
----
-
 ## Struktur Project
 
 ```
@@ -101,7 +96,8 @@ src/
 │   ├── (auth)/login/          # Halaman login
 │   ├── (dashboard)/
 │   │   ├── dashboard/         # Dashboard utama
-│   │   ├── attendance/        # Check-in/out + riwayat
+│   │   ├── attendance/        # Check-in/out + riwayat + ajukan lembur manual
+│   │   ├── overtime/          # Approval lembur (Manager/SPV/Admin)
 │   │   ├── team/              # Monitoring tim (Manager/SPV/Admin)
 │   │   ├── reports/           # Laporan + export Excel
 │   │   ├── notifications/     # Notifikasi in-app
@@ -120,10 +116,12 @@ src/
 │   ├── api.ts                 # API helpers & response utils
 │   └── utils.ts               # Helpers (distance, late calc, formatting)
 ├── types/                     # TypeScript interfaces
-└── middleware.ts              # Auth middleware
+└── middleware.ts              # Auth + RBAC middleware (UI & API)
 prisma/
 ├── schema.prisma              # Database schema
 └── seed.ts                    # Data seeder
+doc/
+└── PRD-HadirBos.md            # Product Requirements Document
 ```
 
 ---
@@ -143,10 +141,51 @@ npm run db:studio    # Prisma Studio (GUI database)
 
 ## Logika Bisnis
 
-- **Keterlambatan**: dihitung jika check-in > jam masuk + toleransi (default 15 menit)
-- **Lembur**: dihitung jika check-out > jam pulang + threshold (default 30 menit)  
-- **Radius**: validasi jarak Haversine antara koordinat karyawan dan kantor
-- **Notifikasi**: otomatis dikirim ke atasan saat terlambat, luar radius, atau lembur
+### Keterlambatan
+- Dihitung jika check-in > `checkInTime + gracePeriod` (default toleransi 15 menit)
+- `lateMinutes` = selisih waktu check-in aktual dengan batas toleransi
+
+### Lembur
+- **Otomatis saat checkout**: jika checkout > `checkOutTime + overtimeAfter` (default 30 menit, configurable per jadwal kerja), sistem otomatis buat `OvertimeApproval` dengan tipe `CHECKOUT_LATE` dan tampilkan modal alasan
+- **Manual via riwayat**: karyawan bisa ajukan lembur dari tab Riwayat untuk tanggal yang sudah checkout tapi belum ada approval, dengan pilihan tipe:
+  - `CHECKOUT_LATE` — pulang terlambat
+  - `CHECKIN_EARLY` — datang lebih awal (durasi auto-dihitung dari selisih checkIn vs jadwal masuk)
+- Satu attendance bisa punya **dua `OvertimeApproval` terpisah** (satu per tipe), masing-masing diproses independen
+- `Attendance.overtimeMinutes` = total menit dari semua approval yang `APPROVED`
+- `Attendance.overtimeStatus` = `NONE | PENDING | APPROVED | REJECTED | PARTIAL`
+  - `PARTIAL` = satu approved, satu rejected dalam hari yang sama
+- Jika lembur **ditolak**: `overtimeMinutes` di-reset ke 0, `isOvertime` = false (untuk tipe yang ditolak)
+- Jika karyawan tidak punya atasan (`managerId` kosong): notifikasi dikirim ke Admin pertama yang aktif
+
+### Re-review Lembur
+- MANAGER/SPV: hanya bisa approve/reject lembur status `PENDING`
+- ADMIN: dapat override keputusan yang sudah `APPROVED` atau `REJECTED` (tombol "Override" di halaman Persetujuan Lembur)
+
+### Radius & Lokasi
+- Validasi jarak Haversine antara koordinat karyawan dan kantor
+- Jika di luar radius: absen tetap masuk, diberi flag `isOutOfRadius = true`, notifikasi ke atasan
+- Radius default 100 meter, configurable per kantor
+
+### Notifikasi
+- Otomatis dikirim ke atasan langsung (`managerId`) saat: terlambat, luar radius, lembur checkout otomatis, lembur manual, lembur disetujui/ditolak
+- Fallback ke Admin jika karyawan tidak punya atasan
+
+---
+
+## Deploy
+
+SOT kode: GitHub (`main` branch)
+SOT database: VPS (SQLite di `/var/www/hadirbos/prisma/dev.db`)
+
+```bash
+# Deploy ke VPS (jalankan di VPS)
+sudo bash /var/www/deploy-hadirbos.sh
+
+# Rollback
+sudo bash /var/www/deploy-hadirbos.sh rollback
+```
+
+Deploy script otomatis: backup kode & DB, pull GitHub, `npm install`, `prisma db push`, `next build`, restart service.
 
 ---
 

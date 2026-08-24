@@ -1,11 +1,305 @@
 # PRD (Product Requirements Document)
 # HadirBos — Aplikasi Absensi Karyawan Berbasis Mobile
 
-**Versi:** 1.0 (Draft untuk diskusi)
-**Tanggal:** 20 Agustus 2026
-**Status:** Draft
+**Versi:** 1.1 (Implemented)
+**Tanggal:** 24 Agustus 2026
+**Status:** Live — https://hadirbos.provaliantgroup.com
 
 ---
+
+## 1. Ringkasan Produk
+
+**HadirBos** adalah aplikasi absensi berbasis web/mobile yang memungkinkan karyawan melakukan absen masuk dan pulang menggunakan handphone masing-masing (self check-in), dilengkapi verifikasi foto diri dan geotagging lokasi, perhitungan keterlambatan dan lembur otomatis, serta modul pelaporan yang bisa difilter dan diexport ke Excel.
+
+## 2. Tujuan (Objectives)
+
+- Menggantikan sistem absensi manual/mesin fingerprint dengan sistem self-service berbasis HP.
+- Memastikan validitas kehadiran melalui foto diri + lokasi (geotag), bukan sekadar klik tombol.
+- Menghitung keterlambatan dan lembur secara otomatis dan konsisten.
+- Menyediakan laporan kehadiran yang mudah diakses oleh manajemen/HR dan bisa diexport.
+
+## 3. Target Pengguna & Role
+
+| Role | Deskripsi | Akses Utama |
+|---|---|---|
+| **Admin** | HR/IT, pengelola sistem penuh | Kelola user, kelola master data (lokasi kantor, jam kerja, hari libur), kelola role, lihat semua laporan, export, koreksi absen, override lembur |
+| **Manager** | Kepala departemen / atasan level lebih tinggi | Lihat & pantau laporan tim/departemennya, approve/reject lembur & koreksi anak buah, terima notifikasi |
+| **SPV** | Supervisor, atasan langsung di lapangan/tim kecil | Lihat & pantau laporan tim yang disupervisi, approve/reject lembur & koreksi anak buah, terima notifikasi |
+| **User** | Karyawan biasa | Login, absen masuk/pulang, ajukan lembur manual, izin pulang awal, lihat riwayat absensi pribadi |
+
+> **Catatan:** Manager dan SPV punya hak akses yang mirip (memantau tim, menerima notifikasi, melakukan koreksi), bedanya hanya di cakupan tim yang mereka awasi (Manager biasanya level departemen, SPV level tim/shift yang lebih kecil). Struktur tim (siapa atasan siapa) didefinisikan di data master user (field `managerId`).
+
+> **Fallback atasan:** Jika karyawan tidak punya `managerId`, notifikasi lembur dikirim ke Admin pertama yang aktif di sistem.
+
+## 4. Data Model — Master User
+
+| Field | Tipe | Keterangan |
+|---|---|---|
+| NIK | String (unique) | Nomor Induk Karyawan |
+| Nama | String | Nama lengkap |
+| Alamat | Text | Alamat domisili |
+| No. Telp | String | Nomor HP |
+| Jabatan | String | Jabatan/posisi |
+| Departemen | String | Untuk filter laporan per departemen |
+| Atasan (managerId) | Reference ke User | Menentukan manager/SPV mana yang menerima notifikasi & bisa approve lembur/koreksi absen user ini |
+| Role | String | ADMIN / MANAGER / SPV / USER |
+| Lokasi Kantor (officeId) | Reference ke Office | Untuk cek radius geofence |
+| Jadwal Kerja (workScheduleId) | Reference ke WorkSchedule | Untuk hitung telat & lembur |
+| Status | Boolean (isActive) | Aktif / Nonaktif |
+| Foto Profil | String (base64/URL) | Opsional |
+| Email & Password | String | Untuk login |
+
+## 5. Fitur Detail
+
+### 5.1 Autentikasi & Login
+- Login menggunakan NIK / email / nomor HP + password.
+- Session token disimpan aman (JWT httpOnly cookie), 7 hari expiry.
+- Logout hanya menghapus cookie client-side (token tidak di-revoke di server — known limitation).
+
+### 5.2 Absen Masuk (Check-in)
+- Jam kerja normal sesuai `WorkSchedule.checkInTime` (default **08:00**).
+- Keterlambatan dihitung jika check-in > `checkInTime + gracePeriod` (default toleransi **15 menit**).
+- `lateMinutes` = selisih waktu check-in aktual dengan batas toleransi, dibulatkan ke menit.
+- Contoh (jadwal 08:00, toleransi 15 menit): check-in 08:20 → telat 5 menit. Check-in 08:10 → tidak telat.
+- Field yang direkam otomatis: timestamp server, foto selfie (live camera), koordinat GPS, alamat, status telat + menit telat, flag luar radius.
+- Satu kali absen masuk per hari per user (tidak bisa absen masuk dua kali, kecuali dikoreksi).
+- Karyawan **bisa check-in kapan saja** — tidak ada batas jam minimum (datang lebih awal dari jadwal tetap bisa langsung absen).
+
+### 5.3 Absen Pulang (Check-out)
+- Absen pulang hanya bisa dilakukan setelah ada absen masuk di hari yang sama.
+- Tidak bisa checkout sebelum jam kerja berakhir, kecuali sudah ada izin pulang awal (`EarlyLeave`) yang disetujui.
+- Field yang direkam: timestamp server, foto selfie, koordinat GPS, alamat.
+
+### 5.4 Lembur — Alur Lengkap
+
+#### Lembur Otomatis (saat Checkout Terlambat)
+- Jika checkout > `checkOutTime + overtimeAfter` (default **30 menit**, configurable per jadwal kerja), sistem otomatis:
+  1. Menampilkan modal alasan lembur kepada karyawan (opsional, max 300 karakter)
+  2. Membuat `OvertimeApproval` dengan tipe `CHECKOUT_LATE` dan status `PENDING`
+  3. Mengirim notifikasi ke atasan (fallback ke Admin jika tidak punya atasan)
+- Contoh (jadwal pulang 17:00, threshold 30 menit): checkout 17:35 → lembur otomatis diajukan. Checkout 17:25 → tidak ada lembur.
+
+#### Lembur Manual (via Riwayat Absen)
+- Karyawan bisa mengajukan lembur secara retroaktif dari tab **Riwayat** di halaman absensi.
+- Tombol ikon jam muncul pada record absen yang sudah checkout tapi belum ada `OvertimeApproval`.
+- Form manual menyediakan dua jenis lembur:
+  - **Pulang Terlambat (`CHECKOUT_LATE`)** — konteks menampilkan jadwal pulang vs jam checkout aktual
+  - **Datang Lebih Awal (`CHECKIN_EARLY`)** — konteks menampilkan jadwal masuk vs jam check-in aktual; durasi lembur auto-dihitung dari selisih check-in vs `checkInTime`
+- Validasi backend untuk `CHECKIN_EARLY`: jam check-in harus benar-benar lebih awal dari jadwal masuk.
+- Alasan lembur **wajib** diisi untuk pengajuan manual.
+- Prefix `[Pulang Terlambat]` atau `[Datang Lebih Awal]` otomatis ditambahkan ke field `reason` untuk kejelasan.
+
+#### Dua Approval Terpisah per Hari
+- Satu attendance bisa punya **dua `OvertimeApproval` terpisah** — satu untuk `CHECKOUT_LATE`, satu untuk `CHECKIN_EARLY`.
+- Masing-masing diproses **independen** — atasan bisa approve salah satu dan reject yang lain.
+- Tidak bisa ada dua record dengan tipe yang sama untuk satu hari.
+
+#### Perhitungan Total Lembur
+- `Attendance.overtimeMinutes` = jumlah menit dari semua `OvertimeApproval` yang `APPROVED` pada hari itu.
+- `Attendance.overtimeStatus` dihitung dari status semua approval:
+
+| Kondisi | overtimeStatus |
+|---|---|
+| Belum ada approval | `NONE` |
+| Ada yang masih `PENDING` | `PENDING` |
+| Semua `APPROVED` | `APPROVED` |
+| Semua `REJECTED` | `REJECTED` |
+| Mix `APPROVED` + `REJECTED` | `PARTIAL` |
+
+#### Jika Lembur Ditolak
+- `isOvertime` = false, `overtimeMinutes` dikurangi sesuai menit yang ditolak (recalculated dari sisa yang approved).
+- Record `OvertimeApproval` tetap ada dengan status `REJECTED` sebagai jejak audit.
+- Karyawan menerima notifikasi beserta catatan penolakan.
+
+#### Jika Tidak Mengajukan Lembur
+- Karyawan datang lebih awal / pulang terlambat tapi tidak mengajukan lembur → tidak ada `OvertimeApproval` dibuat → dihitung absen normal (`overtimeStatus = NONE`, `overtimeMinutes = 0`). Tidak ada efek lain.
+
+### 5.5 Re-review Lembur (Override)
+- **MANAGER/SPV**: hanya bisa approve/reject lembur status `PENDING`.
+- **ADMIN**: dapat override keputusan yang sudah `APPROVED` atau `REJECTED` menggunakan tombol "Override" di halaman Persetujuan Lembur.
+
+### 5.6 Izin Pulang Awal (Early Leave)
+- Karyawan dapat mengajukan izin pulang awal jika waktu masih sebelum jam pulang jadwal.
+- Form: alasan (wajib) + estimasi jam pulang (opsional).
+- Tombol checkout baru aktif setelah izin disetujui atasan.
+
+### 5.7 Koreksi Absen
+- Karyawan bisa mengajukan koreksi jam masuk/pulang dari tab Riwayat.
+- Koreksi dikirim ke atasan untuk disetujui.
+- Data absen baru berlaku setelah disetujui (tidak otomatis).
+
+### 5.8 Foto Diri saat Absen
+- Wajib foto live via kamera (real-time capture dari browser, bukan upload dari galeri).
+- Disimpan sebagai base64 di database (max ~5MB).
+
+### 5.9 Geolocation & Validasi Lokasi
+- Lokasi GPS wajib aktif saat absen.
+- Validasi radius Haversine antara koordinat karyawan dan kantor terdaftar.
+- Default radius: **100 meter**, configurable per kantor.
+- Jika di luar radius: absen tetap masuk, diberi flag `isOutOfRadius = true`, notifikasi ke atasan.
+
+### 5.10 Manajemen Master Data (Admin)
+- CRUD karyawan (NIK, nama, alamat, telp, jabatan, departemen, role, atasan, kantor, jadwal kerja).
+- Kelola kantor (nama, koordinat, radius).
+- Kelola jadwal kerja (nama, jam masuk, jam pulang, toleransi telat, threshold lembur, hari kerja).
+- Kelola hari libur nasional/cuti bersama.
+
+### 5.11 Laporan & Export
+- Filter: rentang tanggal, nama/NIK, departemen, status (telat/lembur/dll).
+- Akses sesuai role: Admin lihat semua; Manager/SPV hanya tim mereka (berdasarkan `managerId`); User hanya data pribadi.
+- Export ke Excel (.xlsx) sesuai filter aktif.
+
+### 5.12 Notifikasi In-App
+- Notifikasi otomatis ke atasan: karyawan terlambat, di luar radius, lembur checkout otomatis, lembur manual diajukan.
+- Notifikasi ke karyawan: lembur disetujui/ditolak (dengan label jenis lembur), koreksi disetujui/ditolak.
+- Fallback ke Admin jika karyawan tidak punya atasan.
+- Cron job: checkout reminder (30 menit sebelum jam pulang), auto-checkout fallback (06:00 WIB untuk yang lupa checkout).
+
+## 6. Business Rules — Ringkasan
+
+| Aturan | Nilai Default | Configurable? |
+|---|---|---|
+| Jam masuk normal | `checkInTime` (sesuai jadwal) | Ya (per jadwal kerja) |
+| Toleransi keterlambatan | `gracePeriod` = 15 menit | Ya (per jadwal kerja) |
+| Jam pulang normal | `checkOutTime` (sesuai jadwal) | Ya (per jadwal kerja) |
+| Mulai hitung lembur checkout | `checkOutTime + overtimeAfter` (default +30 menit) | Ya (per jadwal kerja) |
+| Radius toleransi lokasi | 100 meter | Ya (per kantor) |
+| Absen masuk/pulang per hari | 1x masing-masing | - |
+| Sumber waktu | Timestamp server, bukan HP user | - |
+| Lembur tanpa atasan | Notifikasi ke Admin pertama yang aktif | - |
+| Maksimal jenis lembur per hari | 2 (CHECKOUT_LATE + CHECKIN_EARLY) | - |
+| Override lembur sudah diproses | Hanya ADMIN | - |
+
+## 7. Kebutuhan Non-Fungsional
+
+- **Mobile-first & responsive**: optimal di layar HP (Android & iOS via browser/PWA), tetap bisa diakses via desktop untuk admin/manager.
+- **Fast loading**: target load awal < 2 detik di koneksi 4G biasa.
+- **Keamanan**: JWT httpOnly cookie, RBAC di middleware (UI + API routes), security headers (X-Frame-Options, CSP, Permissions-Policy).
+- **Keamanan & Privasi**: foto & lokasi karyawan adalah data sensitif → akses terbatas by role.
+- **Audit trail**: setiap approval/koreksi tercatat dengan siapa yang memproses, kapan, dan catatan.
+
+## 8. Arsitektur Teknis (Implemented)
+
+| Layer | Implementasi |
+|---|---|
+| Framework | Next.js 14 (App Router) |
+| Language | TypeScript strict mode |
+| Styling | Tailwind CSS + Radix UI + Framer Motion |
+| Database | SQLite via Prisma 5 (ORM) |
+| Auth | JWT via `jose` + httpOnly cookie (7 hari) |
+| Camera | react-webcam |
+| Export | xlsx |
+| Hosting | VPS Cloudeka (103.92.215.251), Nginx + systemd, port 3002 |
+| Domain | hadirbos.provaliantgroup.com |
+| Node.js | >= 20.0.0 |
+
+## 9. Skema Database (Implemented)
+
+Model utama di `prisma/schema.prisma`:
+
+- **User** — karyawan dengan role, managerId (self-referential), officeId, workScheduleId
+- **Office** — lokasi kantor dengan koordinat dan radius
+- **WorkSchedule** — jadwal kerja: checkInTime, checkOutTime, gracePeriod, overtimeAfter, workDays
+- **Attendance** — record absen harian: checkIn, checkOut, isLate, lateMinutes, isOvertime, overtimeMinutes, overtimeStatus (NONE/PENDING/APPROVED/REJECTED/PARTIAL), isOutOfRadius
+- **OvertimeApproval** — approval lembur: attendanceId (non-unique, bisa multiple per attendance), overtimeType (CHECKOUT_LATE/CHECKIN_EARLY), overtimeMinutes, reason, status, reviewedById, notes
+- **AttendanceCorrection** — koreksi absen dengan approval
+- **LeaveRequest** — cuti
+- **EarlyLeave** — izin pulang awal
+- **Holiday** — hari libur nasional
+- **Notification** — notifikasi in-app
+- **Department** — master departemen
+
+## 10. Alur Pengguna (User Flow)
+
+**Absen harian normal:**
+1. Buka app → login → tab Absen
+2. Aktifkan GPS → izinkan kamera → posisi ke area kantor
+3. Tap "Absen Masuk" → foto diambil → GPS dicatat → submit
+4. Sistem hitung telat otomatis → konfirmasi tampil
+5. Sore hari → tap "Absen Pulang" → foto + GPS → submit
+6. Jika pulang > jadwal + threshold → modal alasan lembur muncul → isi alasan → submit
+7. Notifikasi dikirim ke atasan
+
+**Lembur datang awal (manual):**
+1. Check-in lebih awal → absen normal seperti biasa
+2. Masuk tab Riwayat → temukan record hari ini → tap ikon jam
+3. Pilih "Datang Lebih Awal" → durasi auto-terisi → isi alasan → kirim
+4. Atasan menerima notifikasi → approve/reject di halaman Persetujuan Lembur
+
+**Skenario dua lembur satu hari (datang awal + pulang malam):**
+1. Check-in jam 06:00 (jadwal 08:00) → absen masuk tersimpan
+2. Masuk riwayat → ajukan lembur CHECKIN_EARLY 120 menit → status PENDING
+3. Checkout jam 20:00 (jadwal 17:00, threshold 30 menit) → modal muncul → lembur CHECKOUT_LATE 180 menit → status PENDING
+4. Atasan approve CHECKIN_EARLY → `overtimeMinutes = 120`, `overtimeStatus = PENDING` (masih ada yang pending)
+5. Atasan approve CHECKOUT_LATE → `overtimeMinutes = 300`, `overtimeStatus = APPROVED`
+6. Jika atasan reject salah satu → `overtimeStatus = PARTIAL`
+
+## 11. Status Implementasi
+
+**Sudah diimplementasi (MVP):**
+- Login + JWT auth + RBAC middleware (UI + API)
+- Absen masuk/pulang dengan foto live + GPS
+- Hitung telat otomatis dari jadwal kerja
+- Lembur otomatis saat checkout + approval flow
+- Lembur manual (CHECKOUT_LATE + CHECKIN_EARLY) via riwayat
+- Dua approval terpisah per hari + recalculation otomatis
+- Re-review / override oleh Admin
+- Izin pulang awal (early leave)
+- Koreksi absen
+- Notifikasi in-app (+ fallback ke Admin)
+- Laporan + export Excel
+- Cron: checkout reminder + auto-checkout fallback
+- Multi-role (Admin/Manager/SPV/User)
+- Manajemen master data (user, kantor, jadwal, hari libur)
+- Security headers (X-Frame-Options, CSP, Permissions-Policy)
+- Safe deploy script dengan backup DB + rollback
+
+**Belum diimplementasi (fase berikutnya):**
+- JWT revocation (logout server-side)
+- Prisma enum untuk field role/status (saat ini plain String)
+- Notifikasi bertingkat untuk lupa absen pulang (escalating alerts)
+- Push notification / WhatsApp
+- Offline mode
+- Rekap bulanan otomatis untuk payroll
+
+## 12. Keputusan Final (Diimplementasi)
+
+| Poin | Keputusan |
+|---|---|
+| Foto absen | Wajib live camera, tidak ada opsi upload galeri |
+| Lembur | Butuh approval dari atasan (PENDING → APPROVED/REJECTED), bukan langsung tercatat |
+| Jenis lembur | Dua tipe: CHECKOUT_LATE (otomatis saat checkout) dan CHECKIN_EARLY (manual via riwayat) |
+| Dua lembur satu hari | Diizinkan, dua `OvertimeApproval` terpisah dengan approval independen |
+| Total lembur | Sum menit dari semua approval APPROVED; status PARTIAL jika mix approved+rejected |
+| Override lembur | Hanya ADMIN yang bisa override keputusan yang sudah diproses |
+| Tanpa atasan | Notifikasi fallback ke Admin pertama yang aktif |
+| Validasi radius 100m | Tidak blocking; flag + notifikasi ke atasan |
+| Check-in tanpa batas jam | Karyawan bisa check-in kapan saja; datang lebih awal dari jadwal tidak diblok |
+| Lembur tidak diajukan | Tidak ada efek — dihitung absen normal |
+| Struktur kantor | Single office (bukan multi-cabang) |
+| Platform | Web app, diakses via browser HP |
+
+## 13. Error Handling & Fallback
+
+| Skenario | Perilaku |
+|---|---|
+| GPS tidak aktif / ditolak | Tombol absen disabled, tampilkan instruksi |
+| Izin kamera ditolak | Tombol absen disabled, tampilkan instruksi |
+| Submit absen ganda | Backend tolak dengan P2002 unique constraint check |
+| Karyawan tidak punya atasan | Notifikasi dikirim ke Admin pertama yang aktif |
+| Token tidak valid | Cookie dihapus, redirect ke login |
+| Non-admin akses API admin | 403 Forbidden dari middleware |
+| Foto/lokasi tidak tersedia | Absen tidak bisa disubmit, error ditampilkan ke user |
+| Server error | 500 response dengan pesan generik, detail di server log |
+
+**Prinsip:**
+- Semua pesan error dalam bahasa Indonesia yang dimengerti user awam.
+- Validasi di backend, tidak hanya frontend.
+- Operasi kritis (OvertimeApproval, koreksi) menggunakan `prisma.$transaction` untuk atomicity.
+
+---
+
+*Versi 1.1 — Diperbarui 24 Agustus 2026 untuk mencerminkan implementasi aktual yang sudah live di production.*
 
 ## 1. Ringkasan Produk
 
