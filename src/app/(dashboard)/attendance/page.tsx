@@ -29,6 +29,7 @@ export default function AttendancePage() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [hasSchedule, setHasSchedule] = useState<boolean>(true);
   const [scheduleEndTime, setScheduleEndTime] = useState<string>('17:00');
+  const [scheduleStartTime, setScheduleStartTime] = useState<string>('08:00');
   const [overtimeAfterMinutes, setOvertimeAfterMinutes] = useState<number>(30);
 
   // Manual overtime request state
@@ -36,6 +37,7 @@ export default function AttendancePage() {
   const [manualOvertimeTarget, setManualOvertimeTarget] = useState<Attendance | null>(null);
   const [manualOvertimeMinutes, setManualOvertimeMinutes] = useState('');
   const [manualOvertimeReason, setManualOvertimeReason] = useState('');
+  const [manualOvertimeType, setManualOvertimeType] = useState<'CHECKOUT_LATE' | 'CHECKIN_EARLY'>('CHECKOUT_LATE');
   const [submittingManualOvertime, setSubmittingManualOvertime] = useState(false);
 
   // Early leave state
@@ -77,6 +79,9 @@ export default function AttendancePage() {
         setHasSchedule(!!d.data.workScheduleId);
         if (d.data.workSchedule?.checkOutTime) {
           setScheduleEndTime(d.data.workSchedule.checkOutTime);
+        }
+        if (d.data.workSchedule?.checkInTime) {
+          setScheduleStartTime(d.data.workSchedule.checkInTime);
         }
         if (d.data.workSchedule?.overtimeAfter) {
           setOvertimeAfterMinutes(d.data.workSchedule.overtimeAfter);
@@ -269,6 +274,7 @@ export default function AttendancePage() {
           date: manualOvertimeTarget.date,
           overtimeMinutes: minutes,
           reason: manualOvertimeReason.trim(),
+          overtimeType: manualOvertimeType,
         }),
       });
       const data = await res.json();
@@ -569,6 +575,7 @@ export default function AttendancePage() {
                           setManualOvertimeTarget(a);
                           setManualOvertimeMinutes('');
                           setManualOvertimeReason('');
+                          setManualOvertimeType('CHECKOUT_LATE');
                           setShowManualOvertimeModal(true);
                         }}
                         className="btn-ghost btn-sm p-1.5 text-slate-400 hover:text-purple-500"
@@ -775,6 +782,58 @@ export default function AttendancePage() {
                 <AlertTriangle size={15} className="flex-shrink-0 mt-0.5" />
                 <p>Pengajuan lembur manual akan dikirim ke atasan untuk disetujui. Alasan wajib diisi.</p>
               </div>
+
+              {/* Overtime type toggle */}
+              <div>
+                <label className="label">Jenis Lembur</label>
+                <div className="flex bg-gray-100 p-1 rounded-xl">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setManualOvertimeType('CHECKOUT_LATE');
+                      setManualOvertimeMinutes('');
+                    }}
+                    className={cn(
+                      'flex-1 py-2 rounded-lg text-sm font-semibold transition-all',
+                      manualOvertimeType === 'CHECKOUT_LATE'
+                        ? 'bg-white shadow-sm text-slate-900'
+                        : 'text-slate-500'
+                    )}
+                  >
+                    Pulang Terlambat
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setManualOvertimeType('CHECKIN_EARLY');
+                      // Auto-suggest duration from checkIn vs scheduleStartTime
+                      if (manualOvertimeTarget?.checkIn) {
+                        const checkInDate = new Date(manualOvertimeTarget.checkIn);
+                        const [h, m] = scheduleStartTime.split(':').map(Number);
+                        const scheduled = new Date(checkInDate);
+                        scheduled.setHours(h, m, 0, 0);
+                        const diffMin = Math.round((scheduled.getTime() - checkInDate.getTime()) / 60000);
+                        if (diffMin > 0) setManualOvertimeMinutes(String(diffMin));
+                      }
+                    }}
+                    className={cn(
+                      'flex-1 py-2 rounded-lg text-sm font-semibold transition-all',
+                      manualOvertimeType === 'CHECKIN_EARLY'
+                        ? 'bg-white shadow-sm text-slate-900'
+                        : 'text-slate-500'
+                    )}
+                  >
+                    Datang Lebih Awal
+                  </button>
+                </div>
+                {/* Context info */}
+                <p className="text-xs text-slate-400 mt-1.5">
+                  {manualOvertimeType === 'CHECKIN_EARLY'
+                    ? `Jadwal masuk: ${scheduleStartTime}${manualOvertimeTarget?.checkIn ? ` · Absen masuk: ${new Date(manualOvertimeTarget.checkIn).toTimeString().slice(0, 5)}` : ''}`
+                    : `Jadwal pulang: ${scheduleEndTime}${manualOvertimeTarget?.checkOut ? ` · Absen pulang: ${new Date(manualOvertimeTarget.checkOut).toTimeString().slice(0, 5)}` : ''}`}
+                </p>
+              </div>
+
               <div>
                 <label className="label">Durasi Lembur (menit)</label>
                 <input
@@ -794,7 +853,9 @@ export default function AttendancePage() {
                   rows={3}
                   value={manualOvertimeReason}
                   onChange={e => setManualOvertimeReason(e.target.value)}
-                  placeholder="Contoh: Menyelesaikan laporan bulanan, meeting dengan klien..."
+                  placeholder={manualOvertimeType === 'CHECKIN_EARLY'
+                    ? 'Contoh: Persiapan presentasi pagi, setup server sebelum jam kerja...'
+                    : 'Contoh: Menyelesaikan laporan bulanan, meeting dengan klien...'}
                   maxLength={300}
                   autoFocus
                 />

@@ -44,7 +44,10 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { date, overtimeMinutes, reason } = body;
+    const { date, overtimeMinutes, reason, overtimeType } = body;
+
+    const validTypes = ['CHECKOUT_LATE', 'CHECKIN_EARLY'];
+    const resolvedType: string = validTypes.includes(overtimeType) ? overtimeType : 'CHECKOUT_LATE';
 
     if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       return badRequest('Tanggal tidak valid. Gunakan format YYYY-MM-DD.');
@@ -59,12 +62,28 @@ export async function POST(req: NextRequest) {
     // Find attendance for that date
     const attendance = await prisma.attendance.findUnique({
       where: { userId_date: { userId: authUser.userId, date } },
+      include: { user: { include: { workSchedule: true } } },
     });
     if (!attendance) {
       return badRequest('Tidak ada data absen pada tanggal tersebut. Lakukan absen terlebih dahulu.');
     }
-    if (!attendance.checkOut) {
+
+    if (resolvedType === 'CHECKOUT_LATE' && !attendance.checkOut) {
       return badRequest('Anda belum absen pulang pada tanggal tersebut.');
+    }
+    if (resolvedType === 'CHECKIN_EARLY' && !attendance.checkIn) {
+      return badRequest('Tidak ada data absen masuk pada tanggal tersebut.');
+    }
+
+    // For CHECKIN_EARLY: validate that checkIn is actually before scheduled start
+    if (resolvedType === 'CHECKIN_EARLY' && attendance.checkIn && attendance.user?.workSchedule) {
+      const ws = attendance.user.workSchedule;
+      const [h, m] = ws.checkInTime.split(':').map(Number);
+      const scheduledStart = new Date(attendance.checkIn);
+      scheduledStart.setHours(h, m, 0, 0);
+      if (new Date(attendance.checkIn) >= scheduledStart) {
+        return badRequest(`Jam masuk (${new Date(attendance.checkIn).toTimeString().slice(0, 5)}) tidak lebih awal dari jadwal (${ws.checkInTime}). Tidak dapat mengajukan lembur datang awal.`);
+      }
     }
 
     // Check if overtime approval already exists for this attendance
@@ -75,10 +94,8 @@ export async function POST(req: NextRequest) {
       return badRequest('Pengajuan lembur untuk tanggal ini sudah ada. Hubungi atasan untuk review ulang.');
     }
 
-    const user = await prisma.user.findUnique({
-      where: { id: authUser.userId },
-      select: { name: true, managerId: true },
-    });
+    // Reuse user data from attendance include
+    const user = attendance.user;
     if (!user) return badRequest('User tidak ditemukan.');
 
     // Fallback to ADMIN if no manager
@@ -92,6 +109,8 @@ export async function POST(req: NextRequest) {
       notifyUserId = admin?.id ?? null;
     }
 
+    const typeLabel = resolvedType === 'CHECKIN_EARLY' ? 'Datang Lebih Awal' : 'Pulang Terlambat';
+
     // Create approval and update attendance atomically
     await prisma.$transaction([
       prisma.overtimeApproval.create({
@@ -99,7 +118,7 @@ export async function POST(req: NextRequest) {
           attendanceId: attendance.id,
           requestedById: authUser.userId,
           overtimeMinutes,
-          reason: reason.trim(),
+          reason: `[${typeLabel}] ${reason.trim()}`,
           status: 'PENDING',
         },
       }),
@@ -118,8 +137,8 @@ export async function POST(req: NextRequest) {
       await prisma.notification.create({
         data: {
           type: 'OVERTIME',
-          title: 'Pengajuan Lembur (Manual)',
-          message: `${user.name} mengajukan lembur ${overtimeMinutes} menit pada tanggal ${date}. Alasan: ${reason.trim()}. Menunggu persetujuan Anda.`,
+          title: `Pengajuan Lembur - ${typeLabel}`,
+          message: `${user.name} mengajukan lembur ${overtimeMinutes} menit (${typeLabel}) pada tanggal ${date}. Alasan: ${reason.trim()}. Menunggu persetujuan Anda.`,
           recipientId: notifyUserId,
           senderId: authUser.userId,
         },
