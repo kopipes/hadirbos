@@ -29,6 +29,14 @@ export default function AttendancePage() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [hasSchedule, setHasSchedule] = useState<boolean>(true);
   const [scheduleEndTime, setScheduleEndTime] = useState<string>('17:00');
+  const [overtimeAfterMinutes, setOvertimeAfterMinutes] = useState<number>(30);
+
+  // Manual overtime request state
+  const [showManualOvertimeModal, setShowManualOvertimeModal] = useState(false);
+  const [manualOvertimeTarget, setManualOvertimeTarget] = useState<Attendance | null>(null);
+  const [manualOvertimeMinutes, setManualOvertimeMinutes] = useState('');
+  const [manualOvertimeReason, setManualOvertimeReason] = useState('');
+  const [submittingManualOvertime, setSubmittingManualOvertime] = useState(false);
 
   // Early leave state
   const [earlyLeave, setEarlyLeave] = useState<EarlyLeaveStatus | null>(null);
@@ -69,6 +77,9 @@ export default function AttendancePage() {
         setHasSchedule(!!d.data.workScheduleId);
         if (d.data.workSchedule?.checkOutTime) {
           setScheduleEndTime(d.data.workSchedule.checkOutTime);
+        }
+        if (d.data.workSchedule?.overtimeAfter) {
+          setOvertimeAfterMinutes(d.data.workSchedule.overtimeAfter);
         }
       }
     });
@@ -169,7 +180,7 @@ export default function AttendancePage() {
       const [h, m] = scheduleEndTime.split(':').map(Number);
       const schedEnd = new Date(now);
       schedEnd.setHours(h, m, 0, 0);
-      const thresholdMs = schedEnd.getTime() + 30 * 60_000; // default 30 min
+      const thresholdMs = schedEnd.getTime() + overtimeAfterMinutes * 60_000;
       const willBeOvertime = now.getTime() > thresholdMs;
 
       if (willBeOvertime && overtimeReasonText === undefined) {
@@ -241,6 +252,40 @@ export default function AttendancePage() {
       toast.error('Gagal terhubung ke server.');
     } finally {
       setSubmittingCorrection(false);
+    }
+  }
+
+  async function handleManualOvertimeSubmit() {
+    if (!manualOvertimeTarget) return;
+    const minutes = parseInt(manualOvertimeMinutes, 10);
+    if (!minutes || minutes <= 0) { toast.error('Durasi lembur harus lebih dari 0 menit.'); return; }
+    if (!manualOvertimeReason.trim()) { toast.error('Alasan lembur wajib diisi.'); return; }
+    setSubmittingManualOvertime(true);
+    try {
+      const res = await fetch('/api/overtime', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          date: manualOvertimeTarget.date,
+          overtimeMinutes: minutes,
+          reason: manualOvertimeReason.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        toast.success('Pengajuan lembur berhasil dikirim!');
+        setShowManualOvertimeModal(false);
+        setManualOvertimeTarget(null);
+        setManualOvertimeMinutes('');
+        setManualOvertimeReason('');
+        await loadHistory();
+      } else {
+        toast.error(data.error || 'Gagal mengajukan lembur.');
+      }
+    } catch {
+      toast.error('Gagal terhubung ke server.');
+    } finally {
+      setSubmittingManualOvertime(false);
     }
   }
 
@@ -502,20 +547,37 @@ export default function AttendancePage() {
                     {a.notes && <p className="text-xs text-slate-400 mt-1 truncate">{a.notes}</p>}
                   </div>
                   {/* Correction button */}
-                  <button
-                    onClick={() => {
-                      setCorrectionTarget(a);
-                      setCorrectionForm({
-                        newCheckIn: a.checkIn ? formatTime(a.checkIn) : '',
-                        newCheckOut: a.checkOut ? formatTime(a.checkOut) : '',
-                        reason: '',
-                      });
-                    }}
-                    className="btn-ghost btn-sm p-1.5 flex-shrink-0 text-slate-400 hover:text-sky-500"
-                    title="Ajukan koreksi"
-                  >
-                    <Edit2 size={14} />
-                  </button>
+                  <div className="flex flex-col gap-1 flex-shrink-0">
+                    <button
+                      onClick={() => {
+                        setCorrectionTarget(a);
+                        setCorrectionForm({
+                          newCheckIn: a.checkIn ? formatTime(a.checkIn) : '',
+                          newCheckOut: a.checkOut ? formatTime(a.checkOut) : '',
+                          reason: '',
+                        });
+                      }}
+                      className="btn-ghost btn-sm p-1.5 text-slate-400 hover:text-sky-500"
+                      title="Ajukan koreksi"
+                    >
+                      <Edit2 size={14} />
+                    </button>
+                    {/* Manual overtime button — show if checked out and no overtime approval yet */}
+                    {a.checkOut && a.overtimeStatus === 'NONE' && (
+                      <button
+                        onClick={() => {
+                          setManualOvertimeTarget(a);
+                          setManualOvertimeMinutes('');
+                          setManualOvertimeReason('');
+                          setShowManualOvertimeModal(true);
+                        }}
+                        className="btn-ghost btn-sm p-1.5 text-slate-400 hover:text-purple-500"
+                        title="Ajukan lembur manual"
+                      >
+                        <Clock size={14} />
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             ))
@@ -691,6 +753,61 @@ export default function AttendancePage() {
                   className="btn-primary flex-1"
                 >
                   <Save size={15} /> {submittingEarlyLeave ? 'Mengirim...' : 'Kirim Pengajuan'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Manual Overtime Request Modal */}
+      {showManualOvertimeModal && manualOvertimeTarget && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md animate-slide-up">
+            <div className="border-b border-gray-100 px-6 py-4 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-slate-900">Ajukan Lembur Manual</h2>
+                <p className="text-sm text-slate-500">{formatDate(manualOvertimeTarget.date, 'dd MMM yyyy')}</p>
+              </div>
+              <button onClick={() => setShowManualOvertimeModal(false)} className="btn-ghost p-1.5"><X size={18} /></button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="flex items-start gap-2 p-3 bg-purple-50 rounded-xl text-sm text-purple-700">
+                <AlertTriangle size={15} className="flex-shrink-0 mt-0.5" />
+                <p>Pengajuan lembur manual akan dikirim ke atasan untuk disetujui. Alasan wajib diisi.</p>
+              </div>
+              <div>
+                <label className="label">Durasi Lembur (menit)</label>
+                <input
+                  type="number"
+                  className="input"
+                  min={1}
+                  max={480}
+                  value={manualOvertimeMinutes}
+                  onChange={e => setManualOvertimeMinutes(e.target.value)}
+                  placeholder="Contoh: 60"
+                />
+              </div>
+              <div>
+                <label className="label">Alasan Lembur (wajib)</label>
+                <textarea
+                  className="input"
+                  rows={3}
+                  value={manualOvertimeReason}
+                  onChange={e => setManualOvertimeReason(e.target.value)}
+                  placeholder="Contoh: Menyelesaikan laporan bulanan, meeting dengan klien..."
+                  maxLength={300}
+                  autoFocus
+                />
+                <p className="text-xs text-slate-400 mt-1 text-right">{manualOvertimeReason.length}/300</p>
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button onClick={() => setShowManualOvertimeModal(false)} className="btn-secondary flex-1">Batal</button>
+                <button
+                  onClick={handleManualOvertimeSubmit}
+                  disabled={submittingManualOvertime || !manualOvertimeMinutes || !manualOvertimeReason.trim()}
+                  className="btn-primary flex-1"
+                >
+                  <Save size={15} /> {submittingManualOvertime ? 'Mengirim...' : 'Kirim Pengajuan'}
                 </button>
               </div>
             </div>

@@ -20,8 +20,10 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       include: { attendance: true, requestedBy: true },
     });
     if (!overtime) return badRequest('Data lembur tidak ditemukan.');
-    if (overtime.status !== 'PENDING') {
-      return badRequest('Lembur ini sudah diproses sebelumnya.');
+
+    // Only ADMIN can re-review already processed requests
+    if (overtime.status !== 'PENDING' && authUser.role !== 'ADMIN') {
+      return badRequest('Lembur ini sudah diproses. Hanya ADMIN yang dapat mengubah keputusan.');
     }
 
     // Wrap all mutations in a transaction to prevent partial updates

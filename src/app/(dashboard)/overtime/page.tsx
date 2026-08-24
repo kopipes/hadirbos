@@ -8,6 +8,7 @@ import { cn, formatDate, formatTime, formatMinutes } from '@/lib/utils';
 interface OvertimeRequest {
   id: string;
   overtimeMinutes: number;
+  reason?: string | null;
   status: string;
   notes?: string | null;
   createdAt: string;
@@ -171,9 +172,9 @@ export default function OvertimePage() {
                         Catatan reviewer: {req.notes}
                       </p>
                     )}
-                    {(req as OvertimeRequest & { reason?: string }).reason && (
+                    {req.reason && (
                       <p className="text-xs text-purple-600 mt-1.5 bg-purple-50 px-2.5 py-1.5 rounded-lg">
-                        Alasan lembur: {(req as OvertimeRequest & { reason?: string }).reason}
+                        Alasan lembur: {req.reason}
                       </p>
                     )}
                     {req.reviewedBy && (
@@ -184,7 +185,7 @@ export default function OvertimePage() {
                   </div>
 
                   {/* Actions */}
-                  {req.status === 'PENDING' && (
+                  {req.status === 'PENDING' ? (
                     <div className="flex gap-2 flex-shrink-0">
                       <button
                         onClick={() => openReview(req, 'APPROVED')}
@@ -197,6 +198,16 @@ export default function OvertimePage() {
                         className="btn-danger btn-sm"
                       >
                         <XCircle size={14} /> Tolak
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex gap-2 flex-shrink-0">
+                      <button
+                        onClick={() => openReview(req, req.status === 'APPROVED' ? 'REJECTED' : 'APPROVED')}
+                        className="btn-secondary btn-sm text-xs"
+                        title="Override keputusan (hanya ADMIN)"
+                      >
+                        Override
                       </button>
                     </div>
                   )}
@@ -221,7 +232,9 @@ export default function OvertimePage() {
                   : <XCircle size={22} className="text-red-500" />}
               </div>
               <h2 className="text-lg font-bold text-slate-900 text-center">
-                {reviewAction === 'APPROVED' ? 'Setujui Lembur?' : 'Tolak Lembur?'}
+                {reviewTarget.status !== 'PENDING'
+                  ? `Override → ${reviewAction === 'APPROVED' ? 'Setujui' : 'Tolak'}?`
+                  : reviewAction === 'APPROVED' ? 'Setujui Lembur?' : 'Tolak Lembur?'}
               </h2>
               <p className="text-slate-500 text-sm text-center mt-2">
                 <strong className="text-slate-800">{reviewTarget.requestedBy.name}</strong> —{' '}

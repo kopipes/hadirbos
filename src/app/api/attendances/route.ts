@@ -196,10 +196,43 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      // Create OvertimeApproval + notify manager in one go
-      if (isOvertime && user.managerId) {
-        await prisma.$transaction([
-          prisma.overtimeApproval.create({
+      // Create OvertimeApproval + notify manager (or fallback to ADMIN) in one go
+      if (isOvertime) {
+        // If employee has no manager, notify any ADMIN instead
+        let notifyUserId = user.managerId;
+        if (!notifyUserId) {
+          const admin = await prisma.user.findFirst({
+            where: { role: 'ADMIN', isActive: true },
+            select: { id: true },
+            orderBy: { createdAt: 'asc' },
+          });
+          notifyUserId = admin?.id ?? null;
+        }
+
+        if (notifyUserId) {
+          await prisma.$transaction([
+            prisma.overtimeApproval.create({
+              data: {
+                attendanceId: attendance.id,
+                requestedById: authUser.userId,
+                overtimeMinutes,
+                reason: reason?.trim() || null,
+                status: 'PENDING',
+              },
+            }),
+            prisma.notification.create({
+              data: {
+                type: 'OVERTIME',
+                title: 'Pengajuan Lembur',
+                message: `${user.name} lembur ${overtimeMinutes} menit (pulang pukul ${now.toTimeString().slice(0, 5)})${reason ? `. Alasan: ${reason.trim()}` : ''}. Menunggu persetujuan Anda.`,
+                recipientId: notifyUserId,
+                senderId: authUser.userId,
+              },
+            }),
+          ]);
+        } else {
+          // No manager and no admin found — still create approval record
+          await prisma.overtimeApproval.create({
             data: {
               attendanceId: attendance.id,
               requestedById: authUser.userId,
@@ -207,17 +240,8 @@ export async function POST(req: NextRequest) {
               reason: reason?.trim() || null,
               status: 'PENDING',
             },
-          }),
-          prisma.notification.create({
-            data: {
-              type: 'OVERTIME',
-              title: 'Pengajuan Lembur',
-              message: `${user.name} lembur ${overtimeMinutes} menit (pulang pukul ${now.toTimeString().slice(0, 5)})${reason ? `. Alasan: ${reason.trim()}` : ''}. Menunggu persetujuan Anda.`,
-              recipientId: user.managerId,
-              senderId: authUser.userId,
-            },
-          }),
-        ]);
+          });
+        }
       }
 
       return ok(attendance, 'Absen pulang berhasil.');
