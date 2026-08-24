@@ -50,17 +50,24 @@ export async function middleware(req: NextRequest) {
     return res;
   }
 
-  // Role enforcement for /admin/* pages and APIs
-  const isAdminPath =
-    ADMIN_ONLY_PATHS.some((p) => pathname.startsWith(p)) ||
+  // Admin-only UI paths — redirect non-admins
+  const isAdminUiPath = ADMIN_ONLY_PATHS.some((p) => pathname.startsWith(p));
+  if (isAdminUiPath && user.role !== 'ADMIN') {
+    return NextResponse.redirect(new URL('/dashboard', req.url));
+  }
+
+  // Admin-only API paths — return 403 for non-admins
+  const isAdminApiPath =
     pathname.startsWith('/api/departments') ||
     pathname.startsWith('/api/offices') ||
     pathname.startsWith('/api/work-schedules') ||
-    pathname.startsWith('/api/holidays');
-
-  if (isAdminPath && pathname.startsWith('/admin') && user.role !== 'ADMIN') {
-    // Redirect non-admins away from admin UI
-    return NextResponse.redirect(new URL('/dashboard', req.url));
+    pathname.startsWith('/api/holidays') ||
+    pathname.startsWith('/api/users');
+  if (isAdminApiPath && user.role !== 'ADMIN') {
+    return NextResponse.json(
+      { success: false, error: 'Tidak memiliki akses.' },
+      { status: 403 }
+    );
   }
 
   // Redirect root to dashboard
