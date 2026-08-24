@@ -125,28 +125,7 @@ export default function LoginPage() {
           </form>
         </div>
 
-        {/* Demo accounts */}
-        <div className="mt-4 bg-white/70 backdrop-blur rounded-2xl border border-gray-100 p-4">
-          <p className="text-xs font-semibold text-slate-500 mb-2 uppercase tracking-wide">Demo Akun</p>
-          <div className="grid grid-cols-2 gap-2">
-            {[
-              { role: 'Admin', nik: 'ADM001', pass: 'admin123', color: 'text-purple-600 bg-purple-50 border-purple-200' },
-              { role: 'Manager', nik: 'MGR001', pass: 'manager123', color: 'text-blue-600 bg-blue-50 border-blue-200' },
-              { role: 'SPV', nik: 'SPV001', pass: 'spv123', color: 'text-cyan-600 bg-cyan-50 border-cyan-200' },
-              { role: 'Karyawan', nik: 'EMP001', pass: 'user123', color: 'text-green-600 bg-green-50 border-green-200' },
-            ].map((a) => (
-              <button
-                key={a.nik}
-                type="button"
-                className={cn('text-left p-2 rounded-xl border text-xs transition-all hover:scale-105 active:scale-95', a.color)}
-                onClick={() => { setLogin(a.nik); setPassword(a.pass); }}
-              >
-                <div className="font-bold">{a.role}</div>
-                <div className="opacity-75">{a.nik}</div>
-              </button>
-            ))}
-          </div>
-        </div>
+
 
         <p className="text-center text-xs text-slate-400 mt-4">
           © 2026 HadirBos. Versi 1.0
