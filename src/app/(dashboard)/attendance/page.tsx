@@ -60,7 +60,7 @@ export default function AttendancePage() {
   const webcamRef = useRef<Webcam>(null);
 
   const loadTodayAttendance = useCallback(async () => {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getTodayWib();
     try {
       const res = await fetch(`/api/attendances?date=${today}`);
       const data = await res.json();
@@ -158,12 +158,20 @@ export default function AttendancePage() {
   }
 
   // Determine if current time is before scheduled end time (early checkout territory)
+  // Uses WIB (UTC+7) to match server timezone
   function isEarlyCheckout(): boolean {
-    const now = new Date();
+    const nowUtc = Date.now();
+    const nowWib = new Date(nowUtc + 7 * 60 * 60 * 1000);
     const [h, m] = scheduleEndTime.split(':').map(Number);
-    const end = new Date(now);
-    end.setHours(h, m, 0, 0);
-    return now < end;
+    const endWib = new Date(nowWib);
+    endWib.setUTCHours(h, m, 0, 0);
+    return nowWib < endWib;
+  }
+
+  // Get today's date string in WIB (UTC+7)
+  function getTodayWib(): string {
+    const nowWib = new Date(Date.now() + 7 * 60 * 60 * 1000);
+    return nowWib.toISOString().split('T')[0];
   }
 
   const canCheckIn = !todayAttendance?.checkIn;
