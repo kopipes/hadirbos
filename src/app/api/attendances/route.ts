@@ -19,7 +19,8 @@ export async function GET(req: NextRequest) {
     const department = searchParams.get('department');
     const status = searchParams.get('status');
 
-    const targetUserId = authUser.role === 'USER' ? authUser.userId : (userId || undefined);
+    const selfOnly = searchParams.get('self') === 'true';
+    const targetUserId = (authUser.role === 'USER' || selfOnly) ? authUser.userId : (userId || undefined);
 
     // Build date filter — date takes priority over range
     const dateFilter = date

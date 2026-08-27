@@ -62,7 +62,7 @@ export default function AttendancePage() {
   const loadTodayAttendance = useCallback(async () => {
     const today = getTodayWib();
     try {
-      const res = await fetch(`/api/attendances?date=${today}`);
+      const res = await fetch(`/api/attendances?date=${today}&self=true`);
       const data = await res.json();
       if (data.success && data.data.length > 0) {
         setTodayAttendance(data.data[0]);
