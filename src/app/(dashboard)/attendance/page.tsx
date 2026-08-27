@@ -602,8 +602,8 @@ export default function AttendancePage() {
 
       {/* Overtime Reason Modal */}
       {showOvertimeReasonModal && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-4">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md animate-slide-up">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[60] flex items-end sm:items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md max-h-[85vh] overflow-y-auto animate-slide-up">
             <div className="border-b border-gray-100 px-6 py-4 flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-bold text-slate-900">Keterangan Lembur</h2>
@@ -651,8 +651,8 @@ export default function AttendancePage() {
 
       {/* Correction Request Modal */}
       {correctionTarget && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-4">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md animate-slide-up">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[60] flex items-end sm:items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md max-h-[85vh] overflow-y-auto animate-slide-up">
             <div className="border-b border-gray-100 px-6 py-4 flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-bold text-slate-900">Ajukan Koreksi Absen</h2>
@@ -724,8 +724,8 @@ export default function AttendancePage() {
 
       {/* Early Leave Request Modal */}
       {showEarlyLeaveModal && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-4">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md animate-slide-up">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[60] flex items-end sm:items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md max-h-[85vh] overflow-y-auto animate-slide-up">
             <div className="border-b border-gray-100 px-6 py-4 flex items-center justify-between">
               <h2 className="text-lg font-bold text-slate-900">Ajukan Izin Pulang Awal</h2>
               <button onClick={() => setShowEarlyLeaveModal(false)} className="btn-ghost p-1.5"><X size={18} /></button>
@@ -776,8 +776,8 @@ export default function AttendancePage() {
       )}
       {/* Manual Overtime Request Modal */}
       {showManualOvertimeModal && manualOvertimeTarget && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-4">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md animate-slide-up">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[60] flex items-end sm:items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md max-h-[85vh] overflow-y-auto animate-slide-up">
             <div className="border-b border-gray-100 px-6 py-4 flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-bold text-slate-900">Ajukan Lembur Manual</h2>
