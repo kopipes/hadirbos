@@ -112,10 +112,11 @@ export default function AttendancePage() {
 
   async function loadHistory() {
     setHistoryLoading(true);
-    const end = new Date().toISOString().split('T')[0];
-    const start = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const end = getTodayWib();
+    const startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const start = new Date(startDate.getTime() + 7 * 60 * 60 * 1000).toISOString().split('T')[0];
     try {
-      const res = await fetch(`/api/attendances?startDate=${start}&endDate=${end}`);
+      const res = await fetch(`/api/attendances?startDate=${start}&endDate=${end}&self=true`);
       const data = await res.json();
       if (data.success) setHistory(data.data);
     } catch { /* ignore */ }
