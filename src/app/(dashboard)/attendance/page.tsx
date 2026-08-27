@@ -94,7 +94,7 @@ export default function AttendancePage() {
   // Load early leave status when attendance is loaded
   useEffect(() => {
     if (todayAttendance && !todayAttendance.checkOut) {
-      fetch('/api/early-leave?status=')
+      fetch('/api/early-leave?status=&self=true')
         .then(r => r.json())
         .then(d => {
           if (d.success) {

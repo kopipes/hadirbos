@@ -10,11 +10,13 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const status = searchParams.get('status');
+    const selfOnly = searchParams.get('self') === 'true';
 
     const requests = await prisma.earlyLeave.findMany({
       where: {
+        ...(selfOnly ? { userId: authUser.userId } : {}),
         ...(status ? { status } : {}),
-        ...(authUser.role !== 'ADMIN'
+        ...(!selfOnly && authUser.role !== 'ADMIN'
           ? { user: { managerId: authUser.userId } }
           : {}),
       },
