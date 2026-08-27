@@ -420,8 +420,8 @@ export default function AttendancePage() {
           )}
 
           {/* Camera */}
-          <div className="card p-0 overflow-hidden">
-            <div className="relative bg-slate-900 aspect-[4/3] flex items-center justify-center">
+            <div className="card p-0 overflow-hidden">
+            <div className="relative bg-slate-900 aspect-[4/3] max-h-64 sm:max-h-none flex items-center justify-center">
               {!cameraError ? (
                 <Webcam
                   ref={webcamRef}
