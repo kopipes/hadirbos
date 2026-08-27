@@ -28,8 +28,9 @@ export async function GET(req: NextRequest) {
     const status = searchParams.get('status');
     const userId = searchParams.get('userId');
 
-    // Regular users only see their own
-    const targetUserId = authUser.role === 'USER' ? authUser.userId : (userId || undefined);
+    // Regular users only see their own; self=true forces own data for any role
+    const selfOnly = searchParams.get('self') === 'true';
+    const targetUserId = (authUser.role === 'USER' || selfOnly) ? authUser.userId : (userId || undefined);
 
     const requests = await prisma.leaveRequest.findMany({
       where: {

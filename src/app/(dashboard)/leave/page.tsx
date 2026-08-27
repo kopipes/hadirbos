@@ -66,7 +66,7 @@ export default function LeavePage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/leave');
+      const res = await fetch('/api/leave?self=true');
       const data = await res.json();
       if (data.success) setRequests(data.data);
       else toast.error('Gagal memuat data cuti.');
