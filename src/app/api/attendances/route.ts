@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
       if (!me?.isActive) return forbidden();
       const openSessions = await prisma.attendance.findMany({ where: { userId: me.id, ...ACTIVE_SESSION }, orderBy: { checkIn: 'desc' } });
       const today = await prisma.attendance.findUnique({ where: { userId_date: { userId: me.id, date: workDate(new Date(), me.workSchedule) } } });
-      const unresolved = await prisma.attendance.findMany({ where: { userId: me.id, checkOut: null, checkoutState: { in: ['CORRECTION_PENDING', 'CORRECTION_REJECTED'] } }, orderBy: { checkIn: 'asc' } });
+      const unresolved = await prisma.attendance.findMany({ where: { userId: me.id, checkOut: null, checkoutState: { in: ['CORRECTION_PENDING', 'CORRECTION_REJECTED', 'REVIEW_REQUIRED'] } }, orderBy: { checkIn: 'asc' } });
       const current = openSessions.length === 1 ? openSessions[0] : today;
       return ok({ current: current ? { ...current, needsReview: sessionNeedsReview(current) } : null, openSessions, unresolved });
     }
@@ -42,7 +42,7 @@ export async function GET(req: NextRequest) {
     const attendances = await prisma.attendance.findMany({
       where: {
         ...(targetUserId ? { userId: targetUserId } : {}),
-        ...(searchParams.get('open') === 'true' ? { checkIn: { not: null }, checkOut: null } : dateFilter),
+        ...(searchParams.get('open') === 'true' ? { checkIn: { not: null }, checkOut: null, checkoutState: { not: 'REVIEWED_UNKNOWN' } } : dateFilter),
         ...(status ? { status } : {}),
         ...(department && authUser.role !== 'USER' ? { user: { department } } : {}),
         ...(!selfOnly && (authUser.role === 'MANAGER' || authUser.role === 'SPV')

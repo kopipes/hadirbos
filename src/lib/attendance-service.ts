@@ -37,8 +37,8 @@ export async function assertNoOverlap(tx: Tx, userId: string, id: string | null,
   for (const other of others) {
     const otherStart = other.checkIn!;
     const otherEnd = other.checkOut ?? other.corrections[0]?.newCheckOut;
-    // A rejected prior session remains unresolved but must not swallow the newer live session.
-    if (!otherEnd && other.checkoutState === 'CORRECTION_REJECTED' && otherStart < start) continue;
+    // Historical unknown ends are not infinite intervals; later actual starts still bound corrections.
+    if (!otherEnd && ['CORRECTION_REJECTED', 'REVIEW_REQUIRED', 'REVIEWED_UNKNOWN'].includes(other.checkoutState) && otherStart < start) continue;
     if (start.getTime() === otherStart.getTime() || (otherStart > start ? !end || end > otherStart : !otherEnd || otherEnd > start)) {
       throw new AttendanceError('Waktu absen bertabrakan dengan sesi kerja lain. Periksa tanggal dan jam yang diajukan.');
     }
@@ -185,5 +185,31 @@ export async function reviewCorrection(actor: Actor, id: string, status: string,
       message: `Koreksi tanggal kerja ${attendance.date} ${status === 'APPROVED' ? 'disetujui' : 'ditolak'}.${reviewNote ? ` Catatan: ${reviewNote.trim()}` : ''}`,
       recipientId: attendance.userId, senderId: actor.userId,
     } });
+  }, { timeout: 15000 });
+}
+
+export async function settleHistoricalAttendance(actor: Actor, id: string, input: { action: string; checkOut?: unknown; reason: string }, now = new Date()) {
+  if (!['KNOWN_CHECKOUT', 'UNKNOWN_CHECKOUT'].includes(input.action) || typeof input.reason !== 'string' || !input.reason.trim()) throw new AttendanceError('Pilih tindakan dan isi alasan atau sumber konfirmasi.');
+  const end = parseTime(input.checkOut);
+  if (input.action === 'KNOWN_CHECKOUT' && !end) throw new AttendanceError('Tanggal dan jam pulang sebenarnya wajib diisi.');
+  if (input.action === 'UNKNOWN_CHECKOUT' && end) throw new AttendanceError('Jam pulang harus tetap kosong jika tidak diketahui.');
+  return prisma.$transaction(async tx => {
+    const admin = await tx.user.findUnique({ where: { id: actor.userId } });
+    if (!admin?.isActive || admin.role !== 'ADMIN') throw new AttendanceError('Hanya Admin aktif yang dapat menyelesaikan data historis.', 403);
+    let attendance = await tx.attendance.findUnique({ where: { id }, include: { user: { include: { workSchedule: true } } } });
+    if (!attendance?.historicalReview || !attendance.checkIn || attendance.checkOut || !['REVIEW_REQUIRED', 'REVIEWED_UNKNOWN', 'CORRECTION_REJECTED'].includes(attendance.checkoutState)) throw new AttendanceError('Catatan ini bukan data historis yang dapat diselesaikan langsung.', 409);
+    if (attendance.checkoutState === 'REVIEWED_UNKNOWN' && input.action === 'UNKNOWN_CHECKOUT') throw new AttendanceError('Catatan sudah selesai ditinjau.', 409);
+    if (await tx.attendanceCorrection.count({ where: { attendanceId: id, status: 'PENDING' } })) throw new AttendanceError('Proses permintaan koreksi yang sedang menunggu terlebih dahulu.', 409);
+    const user = attendance.user;
+    if (end) {
+      await assertNoOverlap(tx, attendance.userId, id, attendance.checkIn, end, now);
+      const captured = await captureLegacySchedule(tx, attendance, user.workSchedule);
+      await tx.attendance.update({ where: { id }, data: { checkOut: end, checkoutState: 'CLOSED', openSessionKey: null, needsReview: false } });
+      await syncCheckoutOvertime(tx, captured, user, end, input.reason);
+    } else {
+      await tx.attendance.update({ where: { id }, data: { checkoutState: 'REVIEWED_UNKNOWN', openSessionKey: null, needsReview: false } });
+    }
+    await tx.attendanceReviewAction.create({ data: { attendanceId: id, actorId: admin.id, actorName: admin.name, action: input.action, oldCheckOut: attendance.checkOut, newCheckOut: end, reason: input.reason.trim(), createdAt: now } });
+    return tx.attendance.findUniqueOrThrow({ where: { id } });
   }, { timeout: 15000 });
 }

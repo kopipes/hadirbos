@@ -26,7 +26,7 @@ Contoh: Jumat masuk 08.00, pulang Sabtu 01.00 → tanggal kerja Jumat, pulang 01
 6. Jika ditolak, catatan menjadi CORRECTION_REJECTED, tetap tidak dibuka kembali untuk checkout langsung. Sesi baru yang sudah berjalan tetap bisa selesai. Check-in berikutnya ditahan sampai koreksi lama diajukan ulang.
 7. Persetujuan koreksi menghitung ulang telat dan kandidat lembur menggunakan snapshot sesi; lembur yang sudah disetujui tidak diubah otomatis. Riwayat koreksi dan alasan penolakan disimpan. Koreksi jam masuk harus tetap berada dalam tanggal kerja sesi; pemindahan tanggal kerja memerlukan penanganan Admin di luar formulir ini.
 
-Karyawan dengan beberapa sesi OPEN lama perlu menyelesaikan koreksi, bukan memilih sesi sembarang untuk checkout. Database menggunakan `openSessionKey` unik untuk mencegah lebih dari satu sesi aktif baru.
+Catatan historis tanpa checkout diselesaikan Admin melalui **Tinjau Absen Lama**, tanpa menghalangi absen harian. Sesi yang masih aktif tetap menggunakan alur checkout/koreksi biasa. Database menggunakan `openSessionKey` unik untuk mencegah lebih dari satu sesi aktif baru.
 
 ## Pengingat dan peninjauan
 
@@ -53,11 +53,22 @@ npm run build
 # Setelah seluruh langkah berhasil, hidupkan service.
 ```
 
-Script deploy yang ada menghentikan service sebelum backup database, perubahan kode, dan instalasi dependencies. Backup memakai fasilitas SQLite yang konsisten, lalu backfill dijalankan setelah schema push. Jika upgrade/build gagal, service dibiarkan berhenti agar operator meninjau kegagalan. Tidak ada deploy yang dilakukan dari pengerjaan fitur ini.
+Script deploy yang ada menghentikan service sebelum backup database, perubahan kode, dan instalasi dependencies. Backup memakai fasilitas SQLite yang konsisten, lalu backfill dijalankan setelah schema push. Jika upgrade/build gagal, service dibiarkan berhenti agar operator meninjau kegagalan. Konfigurasi service produksi (user, port, environment) dipertahankan pada deployment; gunakan langkah upgrade ini jika tidak ingin menulis ulang unit systemd.
 
-Backfill idempotent mempertahankan timestamp historis. Sesi lama yang selesai ditandai CLOSED. Jika beberapa sesi lama masih terbuka, sesi terbaru dipertahankan sebagai OPEN; lainnya memerlukan pengajuan koreksi. Jadwal historis yang belum memiliki snapshot diisi dari penugasan saat upgrade; konfigurasi jadwal masa lalu tidak dapat direkonstruksi. Auto-checkout historis yang sudah ada tidak dibatalkan otomatis.
+Backfill idempotent mempertahankan timestamp historis. Sesi lama yang selesai ditandai CLOSED. Pada upgrade pertama, hanya sesi terbaru yang berusia maksimal 24 jam dapat dipertahankan sebagai OPEN. Catatan lainnya menjadi REVIEW_REQUIRED dan ditandai historis, bukan dianggap sebagai koreksi yang ditolak. Pada pengulangan migrasi, sesi aktif yang sudah memiliki kunci dipertahankan. Jadwal historis yang belum memiliki snapshot diisi dari penugasan saat upgrade; konfigurasi jadwal masa lalu tidak dapat direkonstruksi. Auto-checkout historis yang sudah ada tidak dibatalkan otomatis.
 
-Jangan memakai rollback script lama langsung setelah upgrade ini: backup lama mengecualikan `.next` dan `node_modules`, sedangkan restore menggunakan `rsync --delete`. Pemulihan membutuhkan instalasi dependencies, generate Prisma client, dan build ulang versi yang dipilih, dengan skema database yang kompatibel. Tidak ada downgrade database otomatis.
+Script rollback yang diperbarui memasang dependencies, melakukan generate Prisma client, dan membangun ulang versi kode yang dipilih sebelum restart. Database saat ini tetap dipertahankan; tidak ada downgrade database otomatis. Backup database terpisah tersedia untuk pemulihan manual bila diperlukan. Script eksternal `/var/www/deploy-hadirbos.sh` harus diperbarui dari file yang sudah di-commit sebelum deploy; `git pull` saja tidak memperbarui script eksternal tersebut.
+
+## Penyelesaian oleh Admin/HR
+
+Menu **Administrasi → Tinjau Absen Lama** (juga tersedia dari Dashboard Admin) menampilkan catatan historis dengan filter belum ditinjau, jam tidak diketahui, jam sudah dikoreksi, dan semua. Daftar dipaginasi 25 catatan per halaman, dapat dicari berdasarkan nama/NIK.
+
+- **Isi Jam Pulang Sebenarnya:** Admin memasukkan tanggal/jam WIB dan alasan/sumber konfirmasi. Waktu divalidasi terhadap check-in serta sesi berikutnya. Tidak memerlukan pengajuan karyawan terlebih dahulu. Kandidat lembur tetap melalui persetujuan; persetujuan yang sudah ada dipertahankan.
+- **Selesai Ditinjau — Jam Tidak Diketahui:** checkout tetap NULL, status REVIEWED_UNKNOWN, penanda perlu ditinjau dihapus. Tidak menetapkan durasi atau menciptakan lembur, dan tidak menghalangi sesi baru. Jika kemudian ada bukti, Admin dapat memasukkan jam yang diketahui melalui menu yang sama.
+- Setiap tindakan menyimpan identitas/nama Admin, waktu, alasan, serta jam pulang lama/usulan dalam audit yang tidak dapat diedit lewat aplikasi. Nama aktor disimpan meskipun akun aktor dihapus. Karyawan yang memiliki catatan audit tidak dapat dihapus permanen melalui aplikasi; nonaktifkan akun untuk mempertahankan riwayat.
+- Jika ada koreksi yang masih pending, Admin perlu memproses koreksi tersebut terlebih dahulu. Menu historis tidak melewati proses yang sedang berjalan.
+- Hak menyelesaikan catatan dicek terhadap role ADMIN aktif pada database saat tindakan, bukan hanya role di token lama.
+- Catatan yang selesai diperiksa dengan waktu tidak diketahui tetap muncul di riwayat/laporan dengan keterangan jelas, tetapi tidak masuk daftar sesi yang masih bekerja.
 
 ## Verifikasi
 

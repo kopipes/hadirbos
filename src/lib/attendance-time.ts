@@ -92,7 +92,7 @@ export function checkInMatchesWorkDate(session: SessionTimes, checkIn: Date, fal
 }
 
 export function sessionNeedsReview(session: SessionTimes, now = new Date()): boolean {
-  if (session.checkOut || !session.checkIn) return false;
+  if (session.checkOut || !session.checkIn || session.checkoutState === 'REVIEWED_UNKNOWN') return false;
   if (session.needsReview || session.checkoutState === 'CORRECTION_REJECTED') return true;
   const { end, reviewAfter } = sessionSchedule(session);
   const due = end ? end.getTime() + reviewAfter * 60_000 : new Date(session.checkIn).getTime() + 24 * 60 * 60_000;
@@ -102,6 +102,8 @@ export function sessionNeedsReview(session: SessionTimes, now = new Date()): boo
 export function sessionStatus(session: SessionTimes): string {
   if (session.checkOut) return 'Selesai';
   if (!session.checkIn) return '-';
+  if (session.checkoutState === 'REVIEWED_UNKNOWN') return 'Sudah ditinjau — jam pulang tidak diketahui';
+  if (session.checkoutState === 'REVIEW_REQUIRED') return 'Data lama — perlu ditinjau Admin';
   if (session.checkoutState === 'CORRECTION_PENDING') return 'Menunggu koreksi';
   if (session.checkoutState === 'CORRECTION_REJECTED') return 'Koreksi ditolak — ajukan ulang';
   return sessionNeedsReview(session) ? 'Perlu ditinjau' : 'Sedang bekerja';

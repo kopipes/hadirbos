@@ -208,6 +208,7 @@ export default function DashboardPage() {
             <p className="text-sm text-slate-600 mb-3">Jam pulang belum disahkan. Periksa apakah karyawan masih bekerja atau lupa absen.</p>
             {stats.reviewSessions.slice(0, 8).map(a => <div key={a.id} className="py-2 border-t border-yellow-200 text-sm"><strong>{a.user?.name}</strong> • {formatDate(a.date, 'dd MMM yyyy')} • {sessionStatus(a)} {a.checkoutState === 'CORRECTION_PENDING' && <Link className="text-sky-600 ml-2" href="/corrections">Proses Koreksi</Link>}</div>)}
           </div>}
+          {profile?.role === 'ADMIN' && <Link href="/admin/attendance-review" className="card block border-sky-200 text-sky-700 font-semibold">Tinjau & Selesaikan Data Absen Lama →</Link>}
           {/* Today list */}
           <div className="card">
             <div className="flex items-center justify-between mb-4">

@@ -15,6 +15,14 @@ REPO=https://github.com/kopipes/hadirbos.git
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 PORT=3002
 SERVICE=hadirbos
+SERVICE_USER=www-data
+EXISTING_SERVICE=false
+if systemctl cat "$SERVICE" >/dev/null 2>&1; then
+  EXISTING_SERVICE=true
+  SERVICE_USER=$(systemctl show "$SERVICE" --property=User --value)
+  SERVICE_USER=${SERVICE_USER:-root}
+fi
+SERVICE_GROUP=$(id -gn "$SERVICE_USER")
 
 mkdir -p $BACKUP_DIR
 
@@ -70,7 +78,11 @@ if [ "$1" == "rollback" ]; then
     --exclude='.env' \
     "$BACKUP_DIR/$LATEST/" "$APP_DIR/"
 
-  chown -R www-data:www-data $APP_DIR
+  cd "$APP_DIR"
+  npm ci
+  npx prisma generate
+  npm run build
+  chown -R "$SERVICE_USER:$SERVICE_GROUP" "$APP_DIR"
   systemctl restart $SERVICE
   sleep 3
   systemctl is-active $SERVICE && echo "Rollback complete to $LATEST — service running" || echo "WARNING: Service failed to start"
@@ -137,7 +149,7 @@ sudo bash -c "sed -i 's|DATABASE_URL=file:./prisma/dev.db|DATABASE_URL=file:$APP
 # 5. Install all dependencies (devDeps needed for Next.js build)
 echo "4. Installing dependencies..."
 cd $APP_DIR
-npm ci 2>&1 | tail -5
+npm ci
 
 # 6. Generate Prisma client
 echo "5. Generating Prisma client..."
@@ -169,10 +181,11 @@ npm run build
 
 # 10. Set permissions
 echo "9. Setting permissions..."
-chown -R www-data:www-data $APP_DIR
+chown -R "$SERVICE_USER:$SERVICE_GROUP" "$APP_DIR"
 
 # 11. Create/update systemd service file
 echo "10. Writing systemd service..."
+if [ "$EXISTING_SERVICE" = false ]; then
 tee /etc/systemd/system/$SERVICE.service > /dev/null << SVCEOF
 [Unit]
 Description=HadirBos Attendance App
@@ -180,7 +193,7 @@ After=network.target
 
 [Service]
 Type=simple
-User=www-data
+User=$SERVICE_USER
 WorkingDirectory=$APP_DIR
 EnvironmentFile=$APP_DIR/.env
 Environment=PORT=$PORT
@@ -196,6 +209,9 @@ SyslogIdentifier=$SERVICE
 [Install]
 WantedBy=multi-user.target
 SVCEOF
+else
+  echo "   Preserving existing service configuration (user: $SERVICE_USER)."
+fi
 
 # 12. Reload systemd and restart
 echo "11. Restarting service..."

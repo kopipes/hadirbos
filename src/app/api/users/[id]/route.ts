@@ -14,6 +14,8 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
     const user = await prisma.user.findUnique({ where: { id: params.id } });
     if (!user) return badRequest('User tidak ditemukan.');
 
+    if (await prisma.attendanceReviewAction.count({ where: { attendance: { userId: params.id } } })) return badRequest('Karyawan memiliki riwayat pemeriksaan absen. Nonaktifkan akun untuk mempertahankan riwayat tersebut.');
+
     // Cascade delete in a transaction
     await prisma.$transaction([
       prisma.notification.deleteMany({

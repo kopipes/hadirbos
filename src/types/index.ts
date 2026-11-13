@@ -68,8 +68,9 @@ export interface Attendance {
   date: string;
   checkIn?: string | null;
   checkOut?: string | null;
-  checkoutState: 'OPEN' | 'CORRECTION_PENDING' | 'CORRECTION_REJECTED' | 'CLOSED';
+  checkoutState: 'OPEN' | 'CORRECTION_PENDING' | 'CORRECTION_REJECTED' | 'REVIEW_REQUIRED' | 'REVIEWED_UNKNOWN' | 'CLOSED';
   needsReview: boolean;
+  historicalReview: boolean;
   scheduleCaptured: boolean;
   scheduledCheckIn?: string | null;
   scheduledCheckOut?: string | null;

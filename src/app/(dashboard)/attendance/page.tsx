@@ -357,11 +357,16 @@ export default function AttendancePage() {
           {sessionLoading && <p className="text-sm text-slate-500">Memuat sesi kerja...</p>}
           {sessionError && <div className="card bg-red-50 text-red-700">{sessionError}<button onClick={loadTodayAttendance} className="btn-secondary btn-sm ml-2">Muat Ulang</button></div>}
           {openSessions.length > 1 && <div className="card bg-red-50 text-red-700">Ada beberapa sesi terbuka. Ajukan koreksi melalui Riwayat atau hubungi Admin sebelum melanjutkan.</div>}
-          {unresolved.map(a => <div key={a.id} className="card bg-yellow-50 border-yellow-200 text-sm">
+          {unresolved.filter(a => a.checkoutState !== 'REVIEW_REQUIRED').map(a => <div key={a.id} className="card bg-yellow-50 border-yellow-200 text-sm">
             <p className="font-semibold">Tanggal kerja {formatDate(a.date, 'dd MMM yyyy')}: {sessionStatus(a)}</p>
             <p className="mt-1">Jam pulang belum disahkan. {a.checkoutState === 'CORRECTION_PENDING' ? 'Anda boleh absen masuk untuk hari kerja berikutnya selama menunggu persetujuan.' : 'Ajukan ulang jam pulang sebenarnya sebelum memulai sesi berikutnya.'}</p>
             {a.checkoutState === 'CORRECTION_REJECTED' && <button className="btn-secondary btn-sm mt-2" onClick={() => openCorrection(a, true)}>Ajukan Ulang Jam Pulang</button>}
           </div>)}
+          {unresolved.some(a => a.checkoutState === 'REVIEW_REQUIRED') && <details className="card bg-slate-50 text-sm">
+            <summary className="font-semibold cursor-pointer">{unresolved.filter(a => a.checkoutState === 'REVIEW_REQUIRED').length} catatan lama menunggu pemeriksaan Admin</summary>
+            <p className="mt-2 text-slate-600">Catatan ini tidak menghambat absen harian. Hubungi Admin/HR jika mengetahui jam pulang sebenarnya.</p>
+            <div className="max-h-40 overflow-y-auto mt-2">{unresolved.filter(a => a.checkoutState === 'REVIEW_REQUIRED').map(a => <p key={a.id} className="py-1">Tanggal kerja {formatDate(a.date, 'dd MMM yyyy')} — jam pulang belum diketahui</p>)}</div>
+          </details>}
           {/* Today status */}
           {todayAttendance && (
             <div className="card bg-gradient-to-r from-green-50 to-emerald-50 border-green-100">

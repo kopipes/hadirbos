@@ -50,6 +50,7 @@ const navGroups: NavGroup[] = [
     roles: ['ADMIN'],
     collapsible: true,
     items: [
+      { href: '/admin/attendance-review', label: 'Tinjau Absen Lama', icon: Edit2 },
       { href: '/admin/users', label: 'Kelola Karyawan', icon: Users },
       { href: '/admin/departments', label: 'Departemen', icon: Building2 },
       { href: '/admin/offices', label: 'Lokasi Kantor', icon: MapPin },

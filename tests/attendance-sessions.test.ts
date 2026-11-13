@@ -14,7 +14,7 @@ process.env.CRON_SECRET = 'synthetic-cron-secret';
 const pushed = spawnSync(process.execPath, ['node_modules/prisma/build/index.js', 'db', 'push', '--skip-generate'], { env: process.env, encoding: 'utf8' });
 assert.equal(pushed.status, 0, pushed.stderr + pushed.stdout);
 const { prisma } = require('../src/lib/prisma');
-const { recordAttendance, requestCorrection, reviewCorrection } = require('../src/lib/attendance-service');
+const { recordAttendance, requestCorrection, reviewCorrection, settleHistoricalAttendance } = require('../src/lib/attendance-service');
 const { runSessionReminders } = require('../src/lib/attendance-reminders');
 const { backfillAttendanceSessions } = require('../scripts/backfill-attendance-sessions');
 const instant = (date: string, time: string) => new Date(`${date}T${time}:00+07:00`);
@@ -33,6 +33,7 @@ async function checkout(id: string, date = '2026-11-13', time = '17:00') {
 }
 
 beforeEach(async () => {
+  await prisma.attendanceReviewAction.deleteMany();
   await prisma.notification.deleteMany();
   await prisma.attendanceCorrection.deleteMany();
   await prisma.overtimeApproval.deleteMany();
@@ -175,12 +176,12 @@ test('backfill preserves timestamps, quarantines duplicate legacy sessions, and 
   await prisma.attendance.create({ data: { userId: employee.id, date: '2026-11-12', checkIn: instant('2026-11-12', '08:00') } });
   const newer = await prisma.attendance.create({ data: { userId: employee.id, date: '2026-11-13', checkIn: instant('2026-11-13', '08:00') } });
   const closed = await prisma.attendance.create({ data: { userId: employee.id, date: '2026-11-11', checkIn: instant('2026-11-11', '08:00'), checkOut: instant('2026-11-12', '01:00') } });
-  await backfillAttendanceSessions();
-  await backfillAttendanceSessions();
+  await backfillAttendanceSessions(instant('2026-11-13', '12:00'));
+  await backfillAttendanceSessions(instant('2026-11-13', '12:00'));
   assert.equal(await prisma.attendance.count({ where: { userId: employee.id, openSessionKey: employee.id } }), 1);
   assert.equal((await prisma.attendance.findUnique({ where: { id: newer.id } })).openSessionKey, employee.id);
   assert.equal((await prisma.attendance.findUnique({ where: { id: closed.id } })).checkOut.toISOString(), closed.checkOut.toISOString());
-  assert.equal(await prisma.attendance.count({ where: { checkoutState: 'CORRECTION_REJECTED' } }), 1);
+  assert.equal(await prisma.attendance.count({ where: { checkoutState: 'REVIEW_REQUIRED' } }), 1);
 });
 
 test('cron endpoint fails closed and middleware allows its own secret authentication', async () => {
@@ -285,4 +286,95 @@ test('checkout from a stale tab cannot close a different live session', async ()
   const session = await checkin();
   await assert.rejects(checkout('another-session', '2026-11-13', '17:00'), /Sesi kerja berubah/);
   assert.equal((await prisma.attendance.findUnique({ where: { id: session.id } })).checkOut, null);
+});
+
+async function historical(date = '2026-08-27') {
+  return prisma.attendance.create({ data: { userId: employee.id, date, checkIn: instant(date, '08:00'), checkoutState: 'REVIEW_REQUIRED', historicalReview: true, needsReview: true, ...scheduleSnapshot(date, schedule) } });
+}
+async function adminActor() {
+  const admin = await prisma.user.create({ data: { nik: 'ADMIN', name: 'Synthetic Admin', password: 'not-real', role: 'ADMIN' } });
+  return { userId: admin.id, role: 'ADMIN' };
+}
+
+test('ancient latest legacy session is historical, not a blocker or a live checkout target', async () => {
+  await prisma.attendance.create({ data: { userId: employee.id, date: '2026-08-27', checkIn: instant('2026-08-27', '08:00') } });
+  await backfillAttendanceSessions(instant('2026-11-13', '12:00'));
+  const old = await prisma.attendance.findFirst({ where: { userId: employee.id } });
+  assert.equal(old.checkoutState, 'REVIEW_REQUIRED');
+  assert.equal(old.openSessionKey, null);
+  assert.equal(old.historicalReview, true);
+  const current = await checkin();
+  await checkout(current.id);
+  assert.equal((await prisma.attendance.findUnique({ where: { id: old.id } })).checkOut, null);
+});
+
+test('unknown historical settlement preserves missing time and approved overtime with immutable audit', async () => {
+  const old = await historical();
+  await prisma.overtimeApproval.create({ data: { attendanceId: old.id, requestedById: employee.id, overtimeMinutes: 60, status: 'APPROVED' } });
+  await prisma.attendance.update({ where: { id: old.id }, data: { overtimeMinutes: 60, overtimeStatus: 'APPROVED', isOvertime: true } });
+  const admin = await adminActor();
+  const result = await settleHistoricalAttendance(admin, old.id, { action: 'UNKNOWN_CHECKOUT', reason: 'Checked with supervisor, no reliable time available' });
+  assert.equal(result.checkOut, null);
+  assert.equal(result.needsReview, false);
+  assert.equal(result.checkoutState, 'REVIEWED_UNKNOWN');
+  assert.equal(result.overtimeMinutes, 60);
+  const audit = await prisma.attendanceReviewAction.findFirst({ where: { attendanceId: old.id } });
+  assert.equal(audit.actorId, admin.userId);
+  assert.equal(audit.actorName, 'Synthetic Admin');
+  assert.equal(audit.newCheckOut, null);
+  assert.ok(audit.reason.includes('supervisor'));
+  const { sessionNeedsReview, sessionStatus } = require('../src/lib/attendance-time');
+  assert.equal(sessionNeedsReview(result), false);
+  assert.match(sessionStatus(result), /Sudah ditinjau/);
+  await assert.rejects(settleHistoricalAttendance(admin, old.id, { action: 'UNKNOWN_CHECKOUT', reason: 'Duplicate' }), (e: any) => e.status === 409);
+  await checkin();
+});
+
+test('Admin can directly record confirmed historical checkout and later resolve an unknown review', async () => {
+  const old = await historical();
+  const admin = await adminActor();
+  await settleHistoricalAttendance(admin, old.id, { action: 'UNKNOWN_CHECKOUT', reason: 'Not known yet' });
+  const result = await settleHistoricalAttendance(admin, old.id, { action: 'KNOWN_CHECKOUT', checkOut: stamp('2026-08-27', '17:00'), reason: 'Employee and supervisor confirmed original timesheet' });
+  assert.equal(result.checkOut.toISOString(), stamp('2026-08-27', '17:00'));
+  assert.equal(result.checkoutState, 'CLOSED');
+  assert.equal(await prisma.attendanceReviewAction.count({ where: { attendanceId: old.id } }), 2);
+  assert.equal(await prisma.attendanceCorrection.count({ where: { attendanceId: old.id } }), 0);
+});
+
+test('historical review requires current active ADMIN, not manager or stale admin JWT role', async () => {
+  const old = await historical();
+  for (const candidate of [reviewer(), { userId: manager.id, role: 'ADMIN' }, actor()]) {
+    await assert.rejects(settleHistoricalAttendance(candidate, old.id, { action: 'UNKNOWN_CHECKOUT', reason: 'Attempt' }), (e: any) => e.status === 403);
+  }
+  const admin = await adminActor();
+  await prisma.user.update({ where: { id: admin.userId }, data: { isActive: false } });
+  await assert.rejects(settleHistoricalAttendance(admin, old.id, { action: 'UNKNOWN_CHECKOUT', reason: 'Attempt' }), (e: any) => e.status === 403);
+});
+
+test('historical settlement rejects overlap, future, live records, and existing pending corrections', async () => {
+  const old = await historical('2026-11-10');
+  const admin = await adminActor();
+  const current = await checkin('2026-11-11');
+  for (const checkoutTime of [stamp('2026-11-10', '07:00'), stamp('2026-11-11', '09:00'), stamp('2026-11-15', '17:00')]) {
+    await assert.rejects(settleHistoricalAttendance(admin, old.id, { action: 'KNOWN_CHECKOUT', checkOut: checkoutTime, reason: 'Invalid range' }, instant('2026-11-13', '12:00')));
+  }
+  await assert.rejects(settleHistoricalAttendance(admin, current.id, { action: 'UNKNOWN_CHECKOUT', reason: 'Cannot archive active session' }), (e: any) => e.status === 409);
+  await requestCorrection(actor(), { attendanceId: old.id, newCheckOut: stamp('2026-11-10', '17:00'), reason: 'Waiting' }, instant('2026-11-13', '12:00'));
+  await assert.rejects(settleHistoricalAttendance(admin, old.id, { action: 'UNKNOWN_CHECKOUT', reason: 'Do not bypass pending review' }), (e: any) => e.status === 409);
+});
+
+test('historical review list is admin-only and paginates missing-time records', async () => {
+  const { GET } = require('../src/app/api/admin/attendance-review/route');
+  const { signToken } = require('../src/lib/auth');
+  const { NextRequest } = require('next/server');
+  await historical();
+  const admin = await adminActor();
+  const token = await signToken({ ...admin, nik: 'ADMIN', name: 'Synthetic Admin' });
+  const response = await GET(new NextRequest('http://localhost/api/admin/attendance-review?scope=pending', { headers: { cookie: `hadirbos_token=${token}` } }));
+  const data = await response.json();
+  assert.equal(data.data.total, 1);
+  assert.equal(data.data.records[0].user.password, undefined);
+  const staleToken = await signToken({ userId: manager.id, role: 'ADMIN', nik: 'MANAGER', name: 'Manager' });
+  const denied = await GET(new NextRequest('http://localhost/api/admin/attendance-review', { headers: { cookie: `hadirbos_token=${staleToken}` } }));
+  assert.equal(denied.status, 403);
 });

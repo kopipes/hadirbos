@@ -61,7 +61,7 @@ export async function GET(req: NextRequest) {
       ]);
 
     const openSessions = await prisma.attendance.findMany({
-      where: { checkIn: { not: null }, checkOut: null, ...(authUser.role !== 'ADMIN' ? { user: { managerId: authUser.userId } } : {}) },
+      where: { checkIn: { not: null }, checkOut: null, checkoutState: { not: 'REVIEWED_UNKNOWN' }, ...(authUser.role !== 'ADMIN' ? { user: { managerId: authUser.userId } } : {}) },
       include: { user: { select: { id: true, name: true, nik: true, department: true } } },
       orderBy: { checkIn: 'asc' },
     });

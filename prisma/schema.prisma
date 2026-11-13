@@ -40,6 +40,7 @@ model User {
   workScheduleId String?
   workSchedule   WorkSchedule? @relation(fields: [workScheduleId], references: [id])
 
+  historicalReviewActions AttendanceReviewAction[]
   attendances           Attendance[]
   notificationsReceived Notification[]       @relation("NotificationRecipient")
   notificationsSent     Notification[]       @relation("NotificationSender")
@@ -101,9 +102,10 @@ model Attendance {
   checkIn         DateTime?
   checkOut        DateTime?
   // date is the work date; timestamps can extend into the next calendar day.
-  checkoutState   String   @default("OPEN") // OPEN | CORRECTION_PENDING | CORRECTION_REJECTED | CLOSED
+  checkoutState   String   @default("OPEN") // OPEN | CORRECTION_PENDING | CORRECTION_REJECTED | REVIEW_REQUIRED | REVIEWED_UNKNOWN | CLOSED
   openSessionKey  String?  @unique // userId only for the live session; NULL otherwise
   needsReview     Boolean  @default(false)
+  historicalReview Boolean @default(false)
   scheduleCaptured Boolean @default(false)
   scheduledCheckIn DateTime?
   scheduledCheckOut DateTime?
@@ -131,6 +133,7 @@ model Attendance {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
+  reviewActions   AttendanceReviewAction[]
   corrections     AttendanceCorrection[]
   overtimeApprovals OvertimeApproval[]
   earlyLeave      EarlyLeave?
@@ -256,4 +259,21 @@ model Notification {
 
   @@index([recipientId, isRead])
   @@index([createdAt])
+}
+
+// Immutable audit of direct Admin/HR settlement of historical missing checkouts.
+model AttendanceReviewAction {
+  id           String @id @default(cuid())
+  attendanceId String
+  attendance   Attendance @relation(fields: [attendanceId], references: [id])
+  actorId      String?
+  actor        User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  actorName    String
+  action       String // KNOWN_CHECKOUT | UNKNOWN_CHECKOUT
+  oldCheckOut  DateTime?
+  newCheckOut  DateTime?
+  reason       String
+  createdAt    DateTime @default(now())
+
+  @@index([attendanceId, createdAt])
 }
