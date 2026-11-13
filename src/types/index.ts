@@ -53,6 +53,8 @@ export interface WorkSchedule {
   name: string;
   checkInTime: string;
   checkOutTime: string;
+  checkOutNextDay: boolean;
+  reviewAfter: number;
   gracePeriod: number;
   overtimeAfter: number;
   workDays: string;
@@ -66,6 +68,14 @@ export interface Attendance {
   date: string;
   checkIn?: string | null;
   checkOut?: string | null;
+  checkoutState: 'OPEN' | 'CORRECTION_PENDING' | 'CORRECTION_REJECTED' | 'CLOSED';
+  needsReview: boolean;
+  scheduleCaptured: boolean;
+  scheduledCheckIn?: string | null;
+  scheduledCheckOut?: string | null;
+  gracePeriodSnapshot?: number | null;
+  overtimeAfterSnapshot?: number | null;
+  reviewAfterSnapshot?: number | null;
   checkInPhoto?: string | null;
   checkOutPhoto?: string | null;
   checkInLat?: number | null;
@@ -78,7 +88,7 @@ export interface Attendance {
   lateMinutes: number;
   isOvertime: boolean;
   overtimeMinutes: number;
-  overtimeStatus: 'NONE' | 'PENDING' | 'APPROVED' | 'REJECTED';
+  overtimeStatus: 'NONE' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'PARTIAL';
   isOutOfRadius: boolean;
   status: AttendanceStatus;
   notes?: string | null;

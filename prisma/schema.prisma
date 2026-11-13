@@ -78,8 +78,10 @@ model WorkSchedule {
   name          String
   checkInTime   String   // "HH:mm"
   checkOutTime  String   // "HH:mm"
+  checkOutNextDay Boolean @default(false)
   gracePeriod   Int      @default(15)
   overtimeAfter Int      @default(30)
+  reviewAfter   Int      @default(180) // minutes after scheduled checkout
   workDays      String   @default("1,2,3,4,5")
   isActive      Boolean  @default(true)
   createdAt     DateTime @default(now())
@@ -98,6 +100,18 @@ model Attendance {
   date            String   // "YYYY-MM-DD"
   checkIn         DateTime?
   checkOut        DateTime?
+  // date is the work date; timestamps can extend into the next calendar day.
+  checkoutState   String   @default("OPEN") // OPEN | CORRECTION_PENDING | CORRECTION_REJECTED | CLOSED
+  openSessionKey  String?  @unique // userId only for the live session; NULL otherwise
+  needsReview     Boolean  @default(false)
+  scheduleCaptured Boolean @default(false)
+  scheduledCheckIn DateTime?
+  scheduledCheckOut DateTime?
+  gracePeriodSnapshot Int?
+  overtimeAfterSnapshot Int?
+  reviewAfterSnapshot Int?
+  reminderSentAt DateTime?
+  reviewNotifiedAt DateTime?
   checkInPhoto    String?
   checkOutPhoto   String?
   checkInLat      Float?
@@ -122,6 +136,7 @@ model Attendance {
   earlyLeave      EarlyLeave?
 
   @@unique([userId, date])
+  @@index([userId, checkoutState, checkOut])
 }
 
 // OvertimeStatus: NONE | PENDING | APPROVED | REJECTED | PARTIAL
@@ -158,6 +173,8 @@ model AttendanceCorrection {
   oldCheckOut   DateTime?
   newCheckOut   DateTime?
   reason        String
+  kind          String     @default("TIME_CHANGE") // TIME_CHANGE | MISSING_CHECKOUT
+  reviewNote    String?
   status        String     @default("PENDING")
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt

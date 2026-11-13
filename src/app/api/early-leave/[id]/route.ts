@@ -1,3 +1,4 @@
+import { canReview } from '@/lib/attendance-service';
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getAuthUser, ok, unauthorized, forbidden, badRequest, serverError } from '@/lib/api';
@@ -19,10 +20,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       where: { id: params.id },
       include: {
         attendance: true,
-        user: { select: { id: true, name: true } },
+        user: { select: { id: true, name: true, managerId: true } },
       },
     });
     if (!earlyLeave) return badRequest('Data izin pulang tidak ditemukan.');
+    if (!canReview(authUser, earlyLeave.user)) return forbidden();
     if (earlyLeave.status !== 'PENDING') {
       return badRequest('Pengajuan ini sudah diproses sebelumnya.');
     }

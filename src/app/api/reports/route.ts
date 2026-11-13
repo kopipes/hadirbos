@@ -1,3 +1,5 @@
+import { formatDateTime } from '@/lib/utils';
+import { sessionNeedsReview, sessionStatus } from '@/lib/attendance-time';
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getAuthUser, ok, unauthorized, forbidden, badRequest, serverError } from '@/lib/api';
@@ -37,9 +39,8 @@ export async function GET(req: NextRequest) {
       where: {
         ...(startDate && endDate ? { date: { gte: startDate, lte: endDate } } : {}),
         ...(userId ? { userId } : {}),
-        ...(department ? { user: { department } } : {}),
+        ...(department || authUser.role !== 'ADMIN' ? { user: { ...(department ? { department } : {}), ...(authUser.role !== 'ADMIN' ? { managerId: authUser.userId } : {}) } } : {}),
         ...(status ? { status } : {}),
-        ...(authUser.role !== 'ADMIN' ? { user: { managerId: authUser.userId } } : {}),
       },
       include: {
         user: {
@@ -55,15 +56,16 @@ export async function GET(req: NextRequest) {
         Nama: a.user?.name || '',
         Departemen: a.user?.department || '',
         Jabatan: a.user?.position || '',
-        Tanggal: a.date,
-        'Jam Masuk': a.checkIn ? new Date(a.checkIn).toTimeString().slice(0, 5) : '-',
-        'Jam Pulang': a.checkOut ? new Date(a.checkOut).toTimeString().slice(0, 5) : '-',
+        'Tanggal Kerja': a.date,
+        'Status Sesi': sessionStatus(a),
+        'Jam Masuk': a.checkIn ? formatDateTime(a.checkIn) + ' WIB' : '-',
+        'Jam Pulang': a.checkOut ? formatDateTime(a.checkOut) + ' WIB' : '-',
         Status: a.status,
         Terlambat: a.isLate ? 'Ya' : 'Tidak',
         'Menit Terlambat': a.lateMinutes,
         Lembur: a.isOvertime ? 'Ya' : 'Tidak',
         'Status Lembur': a.overtimeStatus,
-        'Menit Lembur': a.overtimeMinutes,
+        'Menit Lembur Disetujui': a.overtimeMinutes,
         'Di Luar Radius': a.isOutOfRadius ? 'Ya' : 'Tidak',
         'Lokasi Masuk': a.checkInAddress || '',
         'Lokasi Pulang': a.checkOutAddress || '',
@@ -98,7 +100,7 @@ export async function GET(req: NextRequest) {
       outOfRadius: attendances.filter((a) => a.isOutOfRadius).length,
     };
 
-    return ok({ attendances, stats });
+    return ok({ attendances: attendances.map(a => ({ ...a, needsReview: sessionNeedsReview(a) })), stats });
   } catch (error) {
     console.error('[REPORTS]', error);
     return serverError();

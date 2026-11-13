@@ -1,3 +1,4 @@
+import { sessionNeedsReview } from '@/lib/attendance-time';
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getAuthUser, ok, unauthorized, serverError } from '@/lib/api';
@@ -59,7 +60,14 @@ export async function GET(req: NextRequest) {
         }),
       ]);
 
+    const openSessions = await prisma.attendance.findMany({
+      where: { checkIn: { not: null }, checkOut: null, ...(authUser.role !== 'ADMIN' ? { user: { managerId: authUser.userId } } : {}) },
+      include: { user: { select: { id: true, name: true, nik: true, department: true } } },
+      orderBy: { checkIn: 'asc' },
+    });
+    const reviewSessions = openSessions.filter(a => a.checkoutState !== 'OPEN' || sessionNeedsReview(a)).map(a => ({ ...a, needsReview: sessionNeedsReview(a) }));
     return ok({
+      reviewSessions,
       totalEmployees,
       presentToday: todayAttendances.filter((a) => a.status === 'PRESENT').length,
       lateToday: todayAttendances.filter((a) => a.isLate).length,

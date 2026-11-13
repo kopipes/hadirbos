@@ -1,3 +1,6 @@
+import { sessionSchedule } from '@/lib/attendance-time';
+import { refreshOvertime, AttendanceError } from '@/lib/attendance-service';
+import { correctionError } from '@/lib/attendance-response';
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getAuthUser, ok, unauthorized, forbidden, badRequest, serverError } from '@/lib/api';
@@ -52,7 +55,7 @@ export async function POST(req: NextRequest) {
     if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       return badRequest('Tanggal tidak valid. Gunakan format YYYY-MM-DD.');
     }
-    if (!overtimeMinutes || typeof overtimeMinutes !== 'number' || overtimeMinutes <= 0) {
+    if (!Number.isInteger(overtimeMinutes) || overtimeMinutes <= 0) {
       return badRequest('Durasi lembur harus lebih dari 0 menit.');
     }
     if (!reason?.trim()) {
@@ -75,16 +78,14 @@ export async function POST(req: NextRequest) {
       return badRequest('Tidak ada data absen masuk pada tanggal tersebut.');
     }
 
-    // For CHECKIN_EARLY: validate that checkIn is actually before scheduled start
-    if (resolvedType === 'CHECKIN_EARLY' && attendance.checkIn && attendance.user?.workSchedule) {
-      const ws = attendance.user.workSchedule;
-      const [h, m] = ws.checkInTime.split(':').map(Number);
-      const scheduledStart = new Date(attendance.checkIn);
-      scheduledStart.setHours(h, m, 0, 0);
-      if (new Date(attendance.checkIn) >= scheduledStart) {
-        return badRequest(`Jam masuk (${new Date(attendance.checkIn).toTimeString().slice(0, 5)}) tidak lebih awal dari jadwal (${ws.checkInTime}). Tidak dapat mengajukan lembur datang awal.`);
-      }
+    const schedule = sessionSchedule(attendance, attendance.user.workSchedule);
+    if (resolvedType === 'CHECKIN_EARLY' && (!schedule.start || !attendance.checkIn || attendance.checkIn >= schedule.start)) {
+      return badRequest('Tidak ada waktu masuk lebih awal dari jadwal sesi ini.');
     }
+    const actualMinutes = resolvedType === 'CHECKIN_EARLY'
+      ? schedule.start && attendance.checkIn ? Math.floor((schedule.start.getTime() - attendance.checkIn.getTime()) / 60000) : 0
+      : schedule.end && attendance.checkOut ? Math.floor((attendance.checkOut.getTime() - schedule.end.getTime()) / 60000) : 0;
+    if (overtimeMinutes > actualMinutes) return badRequest('Durasi pengajuan melebihi waktu yang tercatat pada sesi kerja.');
 
     // Check if overtime approval already exists for this attendance AND type
     const existing = await prisma.overtimeApproval.findFirst({
@@ -111,27 +112,12 @@ export async function POST(req: NextRequest) {
 
     const typeLabel = resolvedType === 'CHECKIN_EARLY' ? 'Datang Lebih Awal' : 'Pulang Terlambat';
 
-    // Create approval and update attendance atomically
-    await prisma.$transaction([
-      prisma.overtimeApproval.create({
-        data: {
-          attendanceId: attendance.id,
-          requestedById: authUser.userId,
-          overtimeMinutes,
-          overtimeType: resolvedType,
-          reason: `[${typeLabel}] ${reason.trim()}`,
-          status: 'PENDING',
-        },
-      }),
-      prisma.attendance.update({
-        where: { id: attendance.id },
-        data: {
-          isOvertime: true,
-          overtimeMinutes,
-          overtimeStatus: 'PENDING',
-        },
-      }),
-    ]);
+    // Keep approved totals separate from pending request durations.
+    await prisma.$transaction(async tx => {
+      if (await tx.overtimeApproval.findFirst({ where: { attendanceId: attendance.id, overtimeType: resolvedType } })) throw new AttendanceError('Pengajuan untuk jenis lembur ini sudah ada.');
+      await tx.overtimeApproval.create({ data: { attendanceId: attendance.id, requestedById: authUser.userId, overtimeMinutes, overtimeType: resolvedType, reason: `[${typeLabel}] ${reason.trim()}`, status: 'PENDING' } });
+      await refreshOvertime(tx, attendance.id);
+    });
 
     // Notify manager/admin separately (non-critical)
     if (notifyUserId) {
@@ -148,7 +134,6 @@ export async function POST(req: NextRequest) {
 
     return ok(null, 'Pengajuan lembur berhasil dikirim. Menunggu persetujuan atasan.');
   } catch (error) {
-    console.error('[POST OVERTIME MANUAL]', error);
-    return serverError();
+    return correctionError(error);
   }
 }

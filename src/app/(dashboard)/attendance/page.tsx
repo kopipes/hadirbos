@@ -5,6 +5,7 @@ import { CameraOff, MapPin, CheckCircle2, XCircle, Loader2, Clock, History, Aler
 import Webcam from 'react-webcam';
 import toast from 'react-hot-toast';
 import { cn, formatTime, formatDate, getStatusBadgeColor, getStatusLabel } from '@/lib/utils';
+import { formatSessionTime, sessionSchedule, sessionStatus, toDateTimeInput, minutesAfter } from '@/lib/attendance-time';
 import type { Attendance } from '@/types';
 
 type Tab = 'checkin' | 'history';
@@ -25,12 +26,16 @@ export default function AttendancePage() {
   const [location, setLocation] = useState<{ lat: number; lng: number; address?: string } | null>(null);
   const [locationError, setLocationError] = useState('');
   const [todayAttendance, setTodayAttendance] = useState<Attendance | null>(null);
+  const [unresolved, setUnresolved] = useState<Attendance[]>([]);
+  const [openSessions, setOpenSessions] = useState<Attendance[]>([]);
+  const [sessionLoading, setSessionLoading] = useState(true);
+  const [sessionError, setSessionError] = useState('');
+  const [correctionMissing, setCorrectionMissing] = useState(false);
   const [history, setHistory] = useState<Attendance[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [hasSchedule, setHasSchedule] = useState<boolean>(true);
   const [scheduleEndTime, setScheduleEndTime] = useState<string>('17:00');
   const [scheduleStartTime, setScheduleStartTime] = useState<string>('08:00');
-  const [overtimeAfterMinutes, setOvertimeAfterMinutes] = useState<number>(30);
 
   // Manual overtime request state
   const [showManualOvertimeModal, setShowManualOvertimeModal] = useState(false);
@@ -55,21 +60,21 @@ export default function AttendancePage() {
   // Overtime reason state
   const [showOvertimeReasonModal, setShowOvertimeReasonModal] = useState(false);
   const [overtimeReason, setOvertimeReason] = useState('');
-  const [pendingCheckout, setPendingCheckout] = useState(false);
 
   const webcamRef = useRef<Webcam>(null);
 
   const loadTodayAttendance = useCallback(async () => {
-    const today = getTodayWib();
     try {
-      const res = await fetch(`/api/attendances?date=${today}&self=true`);
+      const res = await fetch('/api/attendances?current=true');
       const data = await res.json();
-      if (data.success && data.data.length > 0) {
-        setTodayAttendance(data.data[0]);
-      } else {
-        setTodayAttendance(null);
-      }
-    } catch { /* ignore */ }
+      if (!res.ok || !data.success) throw new Error(data.error || 'Gagal memuat sesi.');
+      setTodayAttendance(data.data.current);
+      setOpenSessions(data.data.openSessions);
+      setUnresolved(data.data.unresolved);
+      setSessionError('');
+    } catch (error) {
+      setSessionError(error instanceof Error ? error.message : 'Gagal memuat sesi.');
+    } finally { setSessionLoading(false); }
   }, []);
 
   useEffect(() => {
@@ -83,12 +88,13 @@ export default function AttendancePage() {
         if (d.data.workSchedule?.checkInTime) {
           setScheduleStartTime(d.data.workSchedule.checkInTime);
         }
-        if (d.data.workSchedule?.overtimeAfter) {
-          setOvertimeAfterMinutes(d.data.workSchedule.overtimeAfter);
-        }
       }
     });
     getLocation();
+    const interval = setInterval(loadTodayAttendance, 30000);
+    const refresh = () => { if (document.visibilityState === 'visible') loadTodayAttendance(); };
+    document.addEventListener('visibilitychange', refresh);
+    return () => { clearInterval(interval); document.removeEventListener('visibilitychange', refresh); };
   }, [loadTodayAttendance]);
 
   // Load early leave status when attendance is loaded
@@ -158,28 +164,24 @@ export default function AttendancePage() {
     );
   }
 
-  // Determine if current time is before scheduled end time (early checkout territory)
-  // Uses WIB (UTC+7) to match server timezone
+  const activeSchedule = todayAttendance ? sessionSchedule(todayAttendance) : null;
   function isEarlyCheckout(): boolean {
-    const nowUtc = Date.now();
-    const nowWib = new Date(nowUtc + 7 * 60 * 60 * 1000);
-    const [h, m] = scheduleEndTime.split(':').map(Number);
-    const endWib = new Date(nowWib);
-    endWib.setUTCHours(h, m, 0, 0);
-    return nowWib < endWib;
+    return !!activeSchedule?.end && Date.now() < activeSchedule.end.getTime();
   }
 
-  // Get today's date string in WIB (UTC+7)
   function getTodayWib(): string {
-    const nowWib = new Date(Date.now() + 7 * 60 * 60 * 1000);
-    return nowWib.toISOString().split('T')[0];
+    return new Date(Date.now() + 7 * 60 * 60 * 1000).toISOString().split('T')[0];
   }
 
-  const canCheckIn = !todayAttendance?.checkIn;
-  // Can checkout if: checked in, not checked out, AND (time is normal OR early leave approved)
+  function openCorrection(attendance: Attendance, missing = false) {
+    setCorrectionTarget(attendance);
+    setCorrectionMissing(missing);
+    setCorrectionForm({ newCheckIn: missing ? '' : toDateTimeInput(attendance.checkIn), newCheckOut: toDateTimeInput(attendance.checkOut), reason: '' });
+  }
+
+  const canCheckIn = !sessionLoading && !sessionError && openSessions.length === 0 && !todayAttendance?.checkIn && !unresolved.some(a => a.checkoutState === 'CORRECTION_REJECTED');
   const earlyLeaveApproved = earlyLeave?.status === 'APPROVED';
-  const canCheckOut = !!(todayAttendance?.checkIn && !todayAttendance?.checkOut &&
-    (!isEarlyCheckout() || earlyLeaveApproved || !hasSchedule));
+  const canCheckOut = !sessionLoading && !sessionError && openSessions.length === 1 && todayAttendance?.checkoutState === 'OPEN' && !todayAttendance.checkOut && (!isEarlyCheckout() || earlyLeaveApproved);
 
   async function handleAttendance(type: 'checkin' | 'checkout', overtimeReasonText?: string) {
     if (!location) { toast.error('Lokasi belum terdeteksi. Tap "Perbarui Lokasi".'); return; }
@@ -187,21 +189,9 @@ export default function AttendancePage() {
     const photo = webcamRef.current.getScreenshot();
     if (!photo) { toast.error('Gagal mengambil foto. Pastikan kamera aktif.'); return; }
 
-    // If checkout and will be overtime, show reason modal first
-    if (type === 'checkout' && hasSchedule && isEarlyCheckout() === false) {
-      // Check if this checkout will trigger overtime
-      const now = new Date();
-      const [h, m] = scheduleEndTime.split(':').map(Number);
-      const schedEnd = new Date(now);
-      schedEnd.setHours(h, m, 0, 0);
-      const thresholdMs = schedEnd.getTime() + overtimeAfterMinutes * 60_000;
-      const willBeOvertime = now.getTime() > thresholdMs;
-
-      if (willBeOvertime && overtimeReasonText === undefined) {
-        // Show modal to collect reason
-        setShowOvertimeReasonModal(true);
-        return;
-      }
+    if (type === 'checkout' && activeSchedule?.end && minutesAfter(new Date(), activeSchedule.end, activeSchedule.overtimeAfter) > 0 && overtimeReasonText === undefined) {
+      setShowOvertimeReasonModal(true);
+      return;
     }
 
     setLoading(true);
@@ -211,6 +201,7 @@ export default function AttendancePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           type, photo,
+          attendanceId: type === 'checkout' ? todayAttendance?.id : undefined,
           latitude: location.lat,
           longitude: location.lng,
           address: location.address,
@@ -244,11 +235,12 @@ export default function AttendancePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           attendanceId: correctionTarget.id,
+          kind: correctionMissing ? 'MISSING_CHECKOUT' : 'TIME_CHANGE',
           newCheckIn: correctionForm.newCheckIn
-            ? new Date(`${correctionTarget.date}T${correctionForm.newCheckIn}:00+07:00`).toISOString()
+            ? new Date(`${correctionForm.newCheckIn}:00+07:00`).toISOString()
             : null,
           newCheckOut: correctionForm.newCheckOut
-            ? new Date(`${correctionTarget.date}T${correctionForm.newCheckOut}:00+07:00`).toISOString()
+            ? new Date(`${correctionForm.newCheckOut}:00+07:00`).toISOString()
             : null,
           reason: correctionForm.reason,
         }),
@@ -259,6 +251,7 @@ export default function AttendancePage() {
         setCorrectionTarget(null);
         setCorrectionForm({ newCheckIn: '', newCheckOut: '', reason: '' });
         await loadHistory();
+        await loadTodayAttendance();
       } else {
         toast.error(data.error || 'Gagal mengajukan koreksi.');
       }
@@ -294,6 +287,7 @@ export default function AttendancePage() {
         setManualOvertimeMinutes('');
         setManualOvertimeReason('');
         await loadHistory();
+        await loadTodayAttendance();
       } else {
         toast.error(data.error || 'Gagal mengajukan lembur.');
       }
@@ -311,7 +305,7 @@ export default function AttendancePage() {
       const res = await fetch('/api/early-leave', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason: earlyLeaveReason, estimatedOut: earlyLeaveEstTime || undefined }),
+        body: JSON.stringify({ attendanceId: todayAttendance?.id, reason: earlyLeaveReason, estimatedOut: earlyLeaveEstTime || undefined }),
       });
       const data = await res.json();
       if (data.success) {
@@ -334,9 +328,10 @@ export default function AttendancePage() {
   const showEarlyLeaveButton = !!(
     todayAttendance?.checkIn &&
     !todayAttendance?.checkOut &&
-    hasSchedule &&
+    todayAttendance.checkoutState === 'OPEN' &&
+    activeSchedule?.end &&
     isEarlyCheckout() &&
-    !earlyLeave
+    (!earlyLeave || earlyLeave.status === 'REJECTED')
   );
 
   return (
@@ -359,16 +354,24 @@ export default function AttendancePage() {
 
       {tab === 'checkin' && (
         <div className="space-y-4 animate-fade-in">
+          {sessionLoading && <p className="text-sm text-slate-500">Memuat sesi kerja...</p>}
+          {sessionError && <div className="card bg-red-50 text-red-700">{sessionError}<button onClick={loadTodayAttendance} className="btn-secondary btn-sm ml-2">Muat Ulang</button></div>}
+          {openSessions.length > 1 && <div className="card bg-red-50 text-red-700">Ada beberapa sesi terbuka. Ajukan koreksi melalui Riwayat atau hubungi Admin sebelum melanjutkan.</div>}
+          {unresolved.map(a => <div key={a.id} className="card bg-yellow-50 border-yellow-200 text-sm">
+            <p className="font-semibold">Tanggal kerja {formatDate(a.date, 'dd MMM yyyy')}: {sessionStatus(a)}</p>
+            <p className="mt-1">Jam pulang belum disahkan. {a.checkoutState === 'CORRECTION_PENDING' ? 'Anda boleh absen masuk untuk hari kerja berikutnya selama menunggu persetujuan.' : 'Ajukan ulang jam pulang sebenarnya sebelum memulai sesi berikutnya.'}</p>
+            {a.checkoutState === 'CORRECTION_REJECTED' && <button className="btn-secondary btn-sm mt-2" onClick={() => openCorrection(a, true)}>Ajukan Ulang Jam Pulang</button>}
+          </div>)}
           {/* Today status */}
           {todayAttendance && (
             <div className="card bg-gradient-to-r from-green-50 to-emerald-50 border-green-100">
               <div className="flex items-center gap-3">
                 <CheckCircle2 className="text-green-500 flex-shrink-0" size={20} />
                 <div className="flex-1">
-                  <p className="font-semibold text-slate-800">Status Hari Ini</p>
+                  <p className="font-semibold text-slate-800">Sesi {formatDate(todayAttendance.date, 'dd MMM yyyy')} — {sessionStatus(todayAttendance)}</p>
                   <div className="flex gap-4 mt-1 text-sm text-slate-600">
-                    {todayAttendance.checkIn && <span>Masuk: <strong>{formatTime(todayAttendance.checkIn)}</strong></span>}
-                    {todayAttendance.checkOut && <span>Pulang: <strong>{formatTime(todayAttendance.checkOut)}</strong></span>}
+                    {todayAttendance.checkIn && <span>Masuk: <strong>{formatSessionTime(todayAttendance.checkIn, todayAttendance.date)}</strong></span>}
+                    {todayAttendance.checkOut && <span>Pulang: <strong>{formatSessionTime(todayAttendance.checkOut, todayAttendance.date)}</strong></span>}
                   </div>
                   <div className="flex gap-2 mt-2 flex-wrap">
                     {todayAttendance.isLate && (
@@ -387,6 +390,12 @@ export default function AttendancePage() {
             </div>
           )}
 
+          {openSessions.length === 1 && todayAttendance?.checkoutState === 'OPEN' && !todayAttendance.checkOut && (
+            <div className="card border-sky-200 text-sm">
+              <p>Sesi ini dimulai {formatDate(todayAttendance.checkIn!, 'dd MMM yyyy HH:mm')} WIB. Jika baru selesai bekerja, gunakan tombol absen pulang. Jika sudah pulang sebelumnya, ajukan jam sebenarnya.</p>
+              <button className="btn-secondary btn-sm mt-3" onClick={() => openCorrection(todayAttendance, true)}>Sudah Pulang, Lupa Absen</button>
+            </div>
+          )}
           {/* Early leave status banner */}
           {earlyLeave && (
             <div className={cn('card border flex items-start gap-3',
@@ -498,14 +507,14 @@ export default function AttendancePage() {
                   : 'bg-gray-100 text-gray-400 cursor-not-allowed')}
             >
               {loading ? <Loader2 size={24} className="animate-spin" /> : <XCircle size={24} />}
-              <span>Absen Pulang</span>
+              <span>{todayAttendance && todayAttendance.date < getTodayWib() ? 'Saya Baru Selesai Bekerja' : 'Absen Pulang'}</span>
             </button>
           </div>
 
           {/* Early checkout blocked hint */}
-          {todayAttendance?.checkIn && !todayAttendance?.checkOut && hasSchedule && isEarlyCheckout() && !earlyLeaveApproved && (
+          {todayAttendance?.checkIn && !todayAttendance?.checkOut && activeSchedule?.end && isEarlyCheckout() && !earlyLeaveApproved && (
             <p className="text-center text-xs text-slate-500 bg-gray-50 rounded-xl py-2 px-3">
-              Belum waktunya pulang (jadwal: {scheduleEndTime}). Ajukan izin pulang awal jika perlu.
+              Belum waktunya pulang (jadwal: {activeSchedule?.end ? formatDate(activeSchedule.end, 'dd MMM HH:mm') : scheduleEndTime} WIB). Ajukan izin pulang awal jika perlu.
             </p>
           )}
 
@@ -548,6 +557,7 @@ export default function AttendancePage() {
                   </div>
                   <div className="flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
+                      {a.checkIn && <span className="badge bg-sky-50 text-sky-700 border-sky-200">{sessionStatus(a)}</span>}
                       <span className={cn('badge', getStatusBadgeColor(a.status))}>{getStatusLabel(a.status)}</span>
                       {a.isLate && <span className="badge bg-yellow-50 text-yellow-700 border-yellow-200">Terlambat</span>}
                       {a.isOvertime && a.overtimeStatus === 'PENDING' && <span className="badge bg-yellow-50 text-yellow-700 border-yellow-200">Lembur (Menunggu)</span>}
@@ -556,29 +566,22 @@ export default function AttendancePage() {
                       {a.notes?.includes('Izin pulang awal') && <span className="badge bg-blue-50 text-blue-700 border-blue-200">Izin Pulang Awal</span>}
                     </div>
                     <div className="flex gap-4 mt-1.5 text-sm text-slate-600">
-                      <span>Masuk: <strong>{a.checkIn ? formatTime(a.checkIn) : '-'}</strong></span>
-                      <span>Pulang: <strong>{a.checkOut ? formatTime(a.checkOut) : '-'}</strong></span>
+                      <span>Masuk: <strong>{a.checkIn ? formatSessionTime(a.checkIn, a.date) : '-'}</strong></span>
+                      <span>Pulang: <strong>{a.checkOut ? formatSessionTime(a.checkOut, a.date) : '-'}</strong></span>
                     </div>
                     {a.notes && <p className="text-xs text-slate-400 mt-1 truncate">{a.notes}</p>}
                   </div>
                   {/* Correction button */}
                   <div className="flex flex-col gap-1 flex-shrink-0">
                     <button
-                      onClick={() => {
-                        setCorrectionTarget(a);
-                        setCorrectionForm({
-                          newCheckIn: a.checkIn ? formatTime(a.checkIn) : '',
-                          newCheckOut: a.checkOut ? formatTime(a.checkOut) : '',
-                          reason: '',
-                        });
-                      }}
+                      onClick={() => openCorrection(a, !a.checkOut)}
                       className="btn-ghost btn-sm p-1.5 text-slate-400 hover:text-sky-500"
                       title="Ajukan koreksi"
                     >
                       <Edit2 size={14} />
                     </button>
                     {/* Manual overtime button — show if checked out and no overtime approval yet */}
-                    {a.checkOut && a.overtimeStatus === 'NONE' && (
+                    {a.checkOut && (
                       <button
                         onClick={() => {
                           setManualOvertimeTarget(a);
@@ -656,40 +659,39 @@ export default function AttendancePage() {
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md max-h-[85vh] overflow-y-auto animate-slide-up">
             <div className="border-b border-gray-100 px-6 py-4 flex items-center justify-between">
               <div>
-                <h2 className="text-lg font-bold text-slate-900">Ajukan Koreksi Absen</h2>
-                <p className="text-sm text-slate-500">{formatDate(correctionTarget.date, 'dd MMM yyyy')}</p>
+                <h2 className="text-lg font-bold text-slate-900">{correctionMissing ? 'Lupa Absen Pulang' : 'Ajukan Koreksi Absen'}</h2>
+                <p className="text-sm text-slate-500">Tanggal kerja {formatDate(correctionTarget.date, 'dd MMM yyyy')} • Semua waktu WIB</p>
               </div>
               <button onClick={() => setCorrectionTarget(null)} className="btn-ghost p-1.5"><X size={18} /></button>
             </div>
             <div className="p-6 space-y-4">
               <div className="flex items-start gap-2 p-3 bg-blue-50 rounded-xl text-sm text-blue-700">
                 <AlertTriangle size={15} className="flex-shrink-0 mt-0.5" />
-                <p>Koreksi akan dikirim ke atasan Anda untuk disetujui. Data absen baru berlaku setelah disetujui.</p>
+                <p>{correctionMissing ? 'Isi tanggal dan jam saat benar-benar pulang. Jam ini menunggu persetujuan atasan; Anda dapat memulai sesi hari berikutnya setelah pengajuan dikirim.' : 'Koreksi akan dikirim ke atasan Anda untuk disetujui. Data absen baru berlaku setelah disetujui.'}</p>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="label">Jam Masuk Baru</label>
-                  <input
-                    type="time"
-                    className="input"
-                    value={correctionForm.newCheckIn}
-                    onChange={e => setCorrectionForm(f => ({ ...f, newCheckIn: e.target.value }))}
-                  />
-                  <p className="text-xs text-slate-400 mt-1">
-                    Saat ini: {correctionTarget.checkIn ? formatTime(correctionTarget.checkIn) : '-'}
-                  </p>
+                  {correctionMissing ? <>
+                    <p className="label">Jam Masuk Tercatat (WIB)</p>
+                    <p className="text-sm font-semibold text-slate-700">{correctionTarget.checkIn ? formatDate(correctionTarget.checkIn, 'dd MMM yyyy HH:mm') : '-'}</p>
+                  </> : <>
+                    <label className="label">Tanggal & Jam Masuk Baru (WIB)</label>
+                    <input type="datetime-local" className="input" max={toDateTimeInput(new Date())} value={correctionForm.newCheckIn} onChange={e => setCorrectionForm(f => ({ ...f, newCheckIn: e.target.value }))} />
+                    <p className="text-xs text-slate-400 mt-1">Saat ini: {correctionTarget.checkIn ? formatDate(correctionTarget.checkIn, 'dd MMM yyyy HH:mm') : '-'}</p>
+                  </>}
                 </div>
                 <div>
-                  <label className="label">Jam Pulang Baru</label>
+                  <label className="label">Tanggal & Jam Pulang Sebenarnya (WIB)</label>
                   <input
-                    type="time"
+                    type="datetime-local"
                     className="input"
+                    max={toDateTimeInput(new Date())}
                     value={correctionForm.newCheckOut}
                     onChange={e => setCorrectionForm(f => ({ ...f, newCheckOut: e.target.value }))}
                   />
                   <p className="text-xs text-slate-400 mt-1">
-                    Saat ini: {correctionTarget.checkOut ? formatTime(correctionTarget.checkOut) : '-'}
+                    Saat ini: {correctionTarget.checkOut ? formatDate(correctionTarget.checkOut!, 'dd MMM yyyy HH:mm') : '-'}
                   </p>
                 </div>
               </div>
@@ -818,10 +820,8 @@ export default function AttendancePage() {
                       // Auto-suggest duration from checkIn vs scheduleStartTime
                       if (manualOvertimeTarget?.checkIn) {
                         const checkInDate = new Date(manualOvertimeTarget.checkIn);
-                        const [h, m] = scheduleStartTime.split(':').map(Number);
-                        const scheduled = new Date(checkInDate);
-                        scheduled.setHours(h, m, 0, 0);
-                        const diffMin = Math.round((scheduled.getTime() - checkInDate.getTime()) / 60000);
+                        const scheduled = sessionSchedule(manualOvertimeTarget).start;
+                        const diffMin = scheduled ? Math.floor((scheduled.getTime() - checkInDate.getTime()) / 60000) : 0;
                         if (diffMin > 0) setManualOvertimeMinutes(String(diffMin));
                       }
                     }}
@@ -838,8 +838,8 @@ export default function AttendancePage() {
                 {/* Context info */}
                 <p className="text-xs text-slate-400 mt-1.5">
                   {manualOvertimeType === 'CHECKIN_EARLY'
-                    ? `Jadwal masuk: ${scheduleStartTime}${manualOvertimeTarget?.checkIn ? ` · Absen masuk: ${new Date(manualOvertimeTarget.checkIn).toTimeString().slice(0, 5)}` : ''}`
-                    : `Jadwal pulang: ${scheduleEndTime}${manualOvertimeTarget?.checkOut ? ` · Absen pulang: ${new Date(manualOvertimeTarget.checkOut).toTimeString().slice(0, 5)}` : ''}`}
+                    ? `Jadwal masuk: ${(sessionSchedule(manualOvertimeTarget).start ? formatDate(sessionSchedule(manualOvertimeTarget).start!, 'dd MMM HH:mm') : scheduleStartTime)}${manualOvertimeTarget?.checkIn ? ` · Absen masuk: ${formatSessionTime(manualOvertimeTarget.checkIn, manualOvertimeTarget.date)}` : ''}`
+                    : `Jadwal pulang: ${(sessionSchedule(manualOvertimeTarget).end ? formatDate(sessionSchedule(manualOvertimeTarget).end!, 'dd MMM HH:mm') : scheduleEndTime)}${manualOvertimeTarget?.checkOut ? ` · Absen pulang: ${formatSessionTime(manualOvertimeTarget.checkOut, manualOvertimeTarget.date)}` : ''}`}
                 </p>
               </div>
 

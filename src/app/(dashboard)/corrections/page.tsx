@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { Edit2, CheckCircle2, XCircle, RefreshCw, Clock, X, Save, AlertCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { cn, formatDate, formatTime } from '@/lib/utils';
+import { cn, formatDate, formatDateTime, formatTime } from '@/lib/utils';
 
 interface CorrectionRequest {
   id: string;
@@ -72,7 +72,7 @@ export default function CorrectionsPage() {
       const res = await fetch(`/api/attendances/corrections/${reviewTarget.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: reviewAction }),
+        body: JSON.stringify({ status: reviewAction, reviewNote }),
       });
       const data = await res.json();
       if (data.success) {
@@ -170,18 +170,19 @@ export default function CorrectionsPage() {
                     <div className="grid grid-cols-2 gap-3 mt-2">
                       <div className="bg-red-50 rounded-xl p-2.5 text-xs">
                         <p className="text-red-500 font-semibold mb-1">Sebelum</p>
-                        <p>Masuk: <strong>{formatTime(req.oldCheckIn)}</strong></p>
-                        <p>Pulang: <strong>{formatTime(req.oldCheckOut)}</strong></p>
+                        <p>Masuk: <strong>{formatDateTime(req.oldCheckIn)}</strong></p>
+                        <p>Pulang: <strong>{formatDateTime(req.oldCheckOut)}</strong></p>
                       </div>
                       <div className="bg-green-50 rounded-xl p-2.5 text-xs">
                         <p className="text-green-600 font-semibold mb-1">Koreksi</p>
-                        <p>Masuk: <strong>{req.newCheckIn ? formatTime(req.newCheckIn) : '(tidak diubah)'}</strong></p>
-                        <p>Pulang: <strong>{req.newCheckOut ? formatTime(req.newCheckOut) : '(tidak diubah)'}</strong></p>
+                        <p>Masuk: <strong>{req.newCheckIn ? formatDateTime(req.newCheckIn) : '(tidak diubah)'}</strong></p>
+                        <p>Pulang: <strong>{req.newCheckOut ? formatDateTime(req.newCheckOut) : '(tidak diubah)'}</strong></p>
                       </div>
                     </div>
 
                     <p className="text-sm text-slate-700 mt-2 font-medium">Alasan: {req.reason}</p>
 
+                    {req.reviewNote && <p className="text-sm text-slate-600 mt-2">Catatan reviewer: {req.reviewNote}</p>}
                     {req.approvedBy && (
                       <p className="text-xs text-slate-400 mt-1">Diproses oleh: {req.approvedBy.name}</p>
                     )}
@@ -232,13 +233,13 @@ export default function CorrectionsPage() {
                 <div className="flex justify-between">
                   <span className="text-slate-500">Masuk lama → baru</span>
                   <span className="font-semibold text-slate-800">
-                    {formatTime(reviewTarget.oldCheckIn)} → {reviewTarget.newCheckIn ? formatTime(reviewTarget.newCheckIn) : '-'}
+                    {formatDateTime(reviewTarget.oldCheckIn)} → {reviewTarget.newCheckIn ? formatDateTime(reviewTarget.newCheckIn) : '-'}
                   </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-500">Pulang lama → baru</span>
                   <span className="font-semibold text-slate-800">
-                    {formatTime(reviewTarget.oldCheckOut)} → {reviewTarget.newCheckOut ? formatTime(reviewTarget.newCheckOut) : '-'}
+                    {formatDateTime(reviewTarget.oldCheckOut)} → {reviewTarget.newCheckOut ? formatDateTime(reviewTarget.newCheckOut) : '-'}
                   </span>
                 </div>
                 <div className="pt-1 border-t border-gray-200">

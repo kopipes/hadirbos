@@ -1,3 +1,4 @@
+import { ACTIVE_SESSION, sessionSchedule } from '@/lib/attendance-time';
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getAuthUser, ok, unauthorized, forbidden, badRequest, serverError } from '@/lib/api';
@@ -5,7 +6,7 @@ import { getAuthUser, ok, unauthorized, forbidden, badRequest, serverError } fro
 export async function GET(req: NextRequest) {
   const authUser = await getAuthUser(req);
   if (!authUser) return unauthorized();
-  if (!['ADMIN', 'MANAGER', 'SPV'].includes(authUser.role)) return forbidden();
+  if (!['ADMIN', 'MANAGER', 'SPV'].includes(authUser.role) && req.nextUrl.searchParams.get('self') !== 'true') return forbidden();
 
   try {
     const { searchParams } = new URL(req.url);
@@ -42,19 +43,16 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { reason, estimatedOut } = body;
+    const { reason, estimatedOut, attendanceId } = body;
 
     if (!reason?.trim()) return badRequest('Alasan wajib diisi.');
 
-    const today = new Date();
-    const dateStr = today.toISOString().split('T')[0];
-
-    // Must have checked in today
-    const attendance = await prisma.attendance.findUnique({
-      where: { userId_date: { userId: authUser.userId, date: dateStr } },
-    });
-    if (!attendance) return badRequest('Anda belum melakukan absen masuk hari ini.');
-    if (attendance.checkOut) return badRequest('Anda sudah melakukan absen pulang hari ini.');
+    const sessions = await prisma.attendance.findMany({ where: { userId: authUser.userId, ...ACTIVE_SESSION }, include: { user: { include: { workSchedule: true } } }, take: 2 });
+    if (sessions.length !== 1) return badRequest('Tidak ada satu sesi kerja aktif. Muat ulang halaman absen.');
+    const attendance = sessions[0];
+    if (attendanceId !== attendance.id) return badRequest('Sesi berubah. Muat ulang halaman.');
+    const { end } = sessionSchedule(attendance, attendance.user.workSchedule);
+    if (!end || new Date() >= end) return badRequest('Sesi ini tidak memerlukan izin pulang awal.');
 
     // Check no pending/approved early leave for today already
     const existing = await prisma.earlyLeave.findUnique({
@@ -71,8 +69,10 @@ export async function POST(req: NextRequest) {
     });
     if (!user) return badRequest('User tidak ditemukan.');
 
-    const earlyLeave = await prisma.earlyLeave.create({
-      data: {
+    const earlyLeave = await prisma.earlyLeave.upsert({
+      where: { attendanceId: attendance.id },
+      update: { reason: reason.trim(), estimatedOut: estimatedOut || null, status: 'PENDING', reviewedById: null, reviewNote: null },
+      create: {
         userId: authUser.userId,
         attendanceId: attendance.id,
         reason: reason.trim(),

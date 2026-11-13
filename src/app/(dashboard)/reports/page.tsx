@@ -3,7 +3,8 @@
 import { useEffect, useState, useMemo } from 'react';
 import { Download, Search, BarChart3, Filter, MapPin, X, ExternalLink, Camera } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { cn, formatDate, formatTime, getStatusBadgeColor, getStatusLabel, formatMinutes } from '@/lib/utils';
+import { cn, formatDate, formatTime, getStatusBadgeColor, getStatusLabel, formatMinutes, getTodayString } from '@/lib/utils';
+import { formatSessionTime, sessionStatus } from '@/lib/attendance-time';
 import type { Attendance } from '@/types';
 
 interface Stats {
@@ -12,7 +13,7 @@ interface Stats {
 }
 
 export default function ReportsPage() {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getTodayString();
   const firstOfMonth = today.slice(0, 8) + '01';
 
   const [startDate, setStartDate] = useState(firstOfMonth);
@@ -207,13 +208,14 @@ export default function ReportsPage() {
                       <p className="text-xs text-slate-400">{a.user?.nik} · {a.user?.department}</p>
                     </td>
                     <td className="px-4 py-2.5 text-slate-600">{formatDate(a.date, 'dd MMM yyyy')}</td>
-                    <td className="px-4 py-2.5 font-semibold text-slate-800">{a.checkIn ? formatTime(a.checkIn) : '-'}</td>
-                    <td className="px-4 py-2.5 font-semibold text-slate-800">{a.checkOut ? formatTime(a.checkOut) : '-'}</td>
+                    <td className="px-4 py-2.5 font-semibold text-slate-800">{a.checkIn ? formatSessionTime(a.checkIn, a.date) : '-'}</td>
+                    <td className="px-4 py-2.5 font-semibold text-slate-800">{a.checkOut ? formatSessionTime(a.checkOut, a.date) : '-'}</td>
                     <td className="px-4 py-2.5">
                       <div className="flex flex-col gap-1">
                         <span className={cn('badge w-fit', getStatusBadgeColor(a.status))}>
                           {getStatusLabel(a.status)}
                         </span>
+                        {a.checkIn && <span className="text-xs text-sky-700">{sessionStatus(a)}</span>}
                         {a.isOutOfRadius && (
                           <span className="badge w-fit bg-orange-50 text-orange-600 border-orange-200 text-xs">
                             <MapPin size={10} /> Luar Radius
@@ -229,7 +231,7 @@ export default function ReportsPage() {
                     <td className="px-4 py-2.5">
                       {a.isOvertime
                         ? <span className={cn('font-semibold', a.overtimeStatus === 'APPROVED' ? 'text-purple-700' : a.overtimeStatus === 'REJECTED' ? 'text-red-400 line-through' : 'text-yellow-600')}>
-                            {a.overtimeMinutes} mnt
+                            {a.overtimeStatus === 'PENDING' && a.overtimeMinutes === 0 ? 'Menunggu' : `${a.overtimeMinutes} mnt`}
                           </span>
                         : <span className="text-slate-400">-</span>}
                     </td>
@@ -322,9 +324,10 @@ export default function ReportsPage() {
             <div className="p-6 space-y-5">
               {/* Basic info */}
               <div className="grid grid-cols-2 gap-3 text-sm">
-                <InfoBox label="Jam Masuk" value={selected.checkIn ? formatTime(selected.checkIn) : '-'} />
-                <InfoBox label="Jam Pulang" value={selected.checkOut ? formatTime(selected.checkOut) : '-'} />
+                <InfoBox label="Jam Masuk" value={selected.checkIn ? formatSessionTime(selected.checkIn, selected.date) : '-'} />
+                <InfoBox label="Jam Pulang" value={selected.checkOut ? formatSessionTime(selected.checkOut, selected.date) : '-'} />
                 <InfoBox label="Status" value={getStatusLabel(selected.status)} />
+                <InfoBox label="Status Sesi" value={sessionStatus(selected)} />
                 <InfoBox label="Terlambat" value={selected.isLate ? formatMinutes(selected.lateMinutes) : 'Tidak'} />
                 <InfoBox label="Lembur" value={selected.isOvertime ? `${formatMinutes(selected.overtimeMinutes)} (${selected.overtimeStatus})` : 'Tidak'} />
                 <InfoBox label="Luar Radius" value={selected.isOutOfRadius ? 'Ya' : 'Tidak'} highlight={selected.isOutOfRadius} />

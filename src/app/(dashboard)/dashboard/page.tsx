@@ -7,9 +7,11 @@ import {
   Calendar, ArrowRight, MapPin, Timer
 } from 'lucide-react';
 import { cn, formatDate, formatTime, getStatusBadgeColor, getStatusLabel } from '@/lib/utils';
+import { formatSessionTime, sessionStatus } from '@/lib/attendance-time';
 import type { Attendance } from '@/types';
 
 interface DashboardStats {
+  reviewSessions: Attendance[];
   totalEmployees: number;
   presentToday: number;
   lateToday: number;
@@ -40,10 +42,9 @@ export default function DashboardPage() {
     setLoading(true);
     setError('');
     try {
-      const today = new Date().toISOString().split('T')[0];
       const [meRes, attRes] = await Promise.all([
         fetch('/api/auth/me'),
-        fetch(`/api/attendances?date=${today}`),
+        fetch('/api/attendances?current=true'),
       ]);
 
       const [meData, attData] = await Promise.all([meRes.json(), attRes.json()]);
@@ -54,8 +55,7 @@ export default function DashboardPage() {
 
       // My own attendance
       if (attData.success) {
-        const mine = attData.data.find((a: Attendance) => a.userId === me.id);
-        if (mine) setMyAttendance(mine);
+        setMyAttendance(attData.data.current);
       }
 
       // Manager/Admin/SPV: load dashboard stats
@@ -119,15 +119,15 @@ export default function DashboardPage() {
         <div className="card bg-gradient-to-r from-sky-500 to-sky-600 text-white border-0">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sky-100 text-sm font-medium">Status Hari Ini</p>
+              <p className="text-sky-100 text-sm font-medium">Sesi {formatDate(myAttendance.date, 'dd MMM yyyy')}</p>
               <p className="text-2xl font-bold mt-1">
-                {myAttendance.checkOut ? 'Sudah Pulang' : myAttendance.checkIn ? 'Sedang Bekerja' : 'Belum Absen'}
+                {sessionStatus(myAttendance)}
               </p>
             </div>
             {myAttendance.checkIn && (
               <div className="text-right">
                 <p className="text-sky-100 text-xs">Masuk</p>
-                <p className="text-xl font-bold">{formatTime(myAttendance.checkIn)}</p>
+                <p className="text-xl font-bold">{formatSessionTime(myAttendance.checkIn, myAttendance.date)}</p>
               </div>
             )}
           </div>
@@ -140,7 +140,7 @@ export default function DashboardPage() {
               )}
               {myAttendance.isOvertime && (
                 <span className="bg-white/20 text-white text-xs px-2 py-1 rounded-lg">
-                  Lembur {myAttendance.overtimeMinutes} mnt
+                  {myAttendance.overtimeStatus === 'PENDING' && !myAttendance.overtimeMinutes ? 'Pengajuan lembur' : `Lembur ${myAttendance.overtimeMinutes} mnt`}
                   {myAttendance.overtimeStatus === 'PENDING' && ' (Menunggu)'}
                   {myAttendance.overtimeStatus === 'APPROVED' && ' (Disetujui)'}
                   {myAttendance.overtimeStatus === 'REJECTED' && ' (Ditolak)'}
@@ -203,6 +203,11 @@ export default function DashboardPage() {
             </Link>
           </div>
 
+          {stats.reviewSessions.length > 0 && <div className="card border-yellow-200 bg-yellow-50">
+            <div className="flex justify-between items-center mb-3"><h2 className="section-title">Sesi Perlu Ditinjau ({stats.reviewSessions.length})</h2><Link className="text-sm text-sky-600" href="/team?open=true">Lihat Sesi Terbuka</Link></div>
+            <p className="text-sm text-slate-600 mb-3">Jam pulang belum disahkan. Periksa apakah karyawan masih bekerja atau lupa absen.</p>
+            {stats.reviewSessions.slice(0, 8).map(a => <div key={a.id} className="py-2 border-t border-yellow-200 text-sm"><strong>{a.user?.name}</strong> • {formatDate(a.date, 'dd MMM yyyy')} • {sessionStatus(a)} {a.checkoutState === 'CORRECTION_PENDING' && <Link className="text-sky-600 ml-2" href="/corrections">Proses Koreksi</Link>}</div>)}
+          </div>}
           {/* Today list */}
           <div className="card">
             <div className="flex items-center justify-between mb-4">

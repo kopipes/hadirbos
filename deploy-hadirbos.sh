@@ -18,6 +18,34 @@ SERVICE=hadirbos
 
 mkdir -p $BACKUP_DIR
 
+# First install may have no unit. Existing services must stop successfully.
+stop_application() {
+  if systemctl cat "$SERVICE" >/dev/null 2>&1; then
+    systemctl stop "$SERVICE"
+    if systemctl is-active --quiet "$SERVICE"; then
+      echo "Service is still active; refusing to modify application or database."
+      exit 1
+    fi
+  fi
+}
+
+# SQLite backup reads a consistent snapshot, including committed WAL pages.
+backup_database() {
+  if command -v sqlite3 >/dev/null 2>&1; then
+    sqlite3 "$DB_FILE" ".backup '$1'"
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 - "$DB_FILE" "$1" <<'PYBACKUP'
+import sqlite3
+import sys
+with sqlite3.connect(sys.argv[1]) as source, sqlite3.connect(sys.argv[2]) as target:
+    source.backup(target)
+PYBACKUP
+  else
+    echo "Install sqlite3 or python3 before deployment; no database backup was made."
+    exit 1
+  fi
+}
+
 # Ensure git trusts this directory (avoids dubious ownership errors)
 git config --global --add safe.directory $APP_DIR 2>/dev/null || true
 
@@ -30,9 +58,10 @@ if [ "$1" == "rollback" ]; then
   fi
   echo "Rolling back to: $LATEST"
 
+  stop_application
   # Preserve current DB before overwriting
   if [ -f "$DB_FILE" ]; then
-    cp "$DB_FILE" "$BACKUP_DIR/rollback-db-$TIMESTAMP.db"
+    backup_database "$BACKUP_DIR/rollback-db-$TIMESTAMP.db"
     echo "Current DB saved to $BACKUP_DIR/rollback-db-$TIMESTAMP.db"
   fi
 
@@ -50,6 +79,9 @@ fi
 
 # ── FORWARD DEPLOY ─────────────────────────────────────────────────────────────
 echo "=== HadirBos Deploy $TIMESTAMP ==="
+
+# Stop application writers BEFORE backups, code updates, or dependency installation.
+stop_application
 
 # 1. Backup current code (exclude DB and node_modules — too large)
 if [ -d "$APP_DIR/.git" ]; then
@@ -69,7 +101,7 @@ fi
 # 2. Backup DB separately
 if [ -f "$DB_FILE" ]; then
   echo "2. Backing up database..."
-  cp "$DB_FILE" "$BACKUP_DIR/db-$TIMESTAMP.db"
+  backup_database "$BACKUP_DIR/db-$TIMESTAMP.db"
   echo "   DB backup: $BACKUP_DIR/db-$TIMESTAMP.db"
 fi
 
@@ -111,9 +143,11 @@ npm ci 2>&1 | tail -5
 echo "5. Generating Prisma client..."
 npx prisma generate
 
-# 7. Push DB schema (safe — only adds new tables/columns, no data loss)
+# 7. Apply schema changes and backfill with application writers already stopped.
+# On failure, leave the service stopped for operator review.
 echo "6. Pushing DB schema (safe migration)..."
 npx prisma db push --skip-generate
+npm run db:backfill-sessions
 
 # 8. Seed only if DB has no users (true first deploy)
 echo "7. Checking if seed needed..."

@@ -1,3 +1,5 @@
+> Pembaruan 13 November 2026: aturan implementasi checkout lintas hari, pengajuan lupa checkout, dan pengingat mengikuti [Sesi Kerja Lintas Hari](Absensi-Lintas-Hari.md). Bagian lama tentang auto-checkout, lembur tanpa approval, dan checkout lintas hari di bawah tidak menjadi acuan implementasi fitur ini.
+
 # PRD (Product Requirements Document)
 # HadirBos — Aplikasi Absensi Karyawan Berbasis Mobile
 

@@ -10,6 +10,8 @@
 
 ---
 
+Aturan sesi lintas tengah malam, lupa checkout, dan upgrade data dijelaskan di [Sesi Kerja Lintas Hari](doc/Absensi-Lintas-Hari.md). Jam pulang tidak lagi diisi otomatis oleh cron.
+
 ## Fitur Utama
 
 - **Self Check-in/Check-out** — Absen via kamera selfie + GPS langsung dari browser

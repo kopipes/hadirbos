@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import { Search, Filter, Download, RefreshCw, CheckCircle2, XCircle, Clock, AlertTriangle, MapPin } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { cn, formatTime, getStatusBadgeColor, getStatusLabel, formatDate } from '@/lib/utils';
+import { cn, formatTime, getStatusBadgeColor, getStatusLabel, formatDate, getTodayString } from '@/lib/utils';
+import { formatSessionTime, sessionStatus } from '@/lib/attendance-time';
 import type { Attendance } from '@/types';
 
 export default function TeamPage() {
@@ -12,12 +13,15 @@ export default function TeamPage() {
   const [search, setSearch] = useState('');
   const [filterDept, setFilterDept] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  const [date, setDate] = useState(getTodayString());
+  const [showOpen, setShowOpen] = useState(false);
+  useEffect(() => { setShowOpen(new URLSearchParams(window.location.search).get('open') === 'true'); }, []);
   const [departments, setDepartments] = useState<string[]>([]);
 
   async function load() {
     setLoading(true);
     const params = new URLSearchParams({ date });
+    if (showOpen) params.set('open', 'true');
     if (filterDept) params.set('department', filterDept);
     if (filterStatus) params.set('status', filterStatus);
     const res = await fetch(`/api/attendances?${params}`);
@@ -30,7 +34,7 @@ export default function TeamPage() {
     setLoading(false);
   }
 
-  useEffect(() => { load(); }, [date, filterDept, filterStatus]);
+  useEffect(() => { load(); }, [date, filterDept, filterStatus, showOpen]);
 
   const filtered = attendances.filter((a) =>
     !search ||
@@ -84,6 +88,7 @@ export default function TeamPage() {
         </div>
       </div>
 
+      <label className="flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" checked={showOpen} onChange={e => setShowOpen(e.target.checked)} /> Tampilkan sesi belum selesai dari semua tanggal</label>
       {/* Summary badges */}
       <div className="grid grid-cols-4 gap-2">
         {[
@@ -134,13 +139,13 @@ export default function TeamPage() {
                         </div>
                         <div>
                           <p className="font-semibold text-slate-800">{a.user?.name}</p>
-                          <p className="text-xs text-slate-400">{a.user?.nik} · {a.user?.department}</p>
+                          <p className="text-xs text-slate-400">{a.user?.nik} · {a.user?.department}</p><p className="text-xs text-slate-500">Tanggal kerja {formatDate(a.date, 'dd MMM yyyy')}</p>
                         </div>
                       </div>
                     </td>
                     <td className="px-4 py-3">
                       <span className="font-semibold text-slate-800">
-                        {a.checkIn ? formatTime(a.checkIn) : '-'}
+                        {a.checkIn ? formatSessionTime(a.checkIn, a.date) : '-'}
                       </span>
                       {a.isLate && (
                         <span className="ml-1.5 text-xs text-yellow-600 bg-yellow-50 px-1.5 py-0.5 rounded-full">+{a.lateMinutes}m</span>
@@ -148,7 +153,7 @@ export default function TeamPage() {
                     </td>
                     <td className="px-4 py-3">
                       <span className="font-semibold text-slate-800">
-                        {a.checkOut ? formatTime(a.checkOut) : '-'}
+                        {a.checkOut ? formatSessionTime(a.checkOut, a.date) : '-'}
                       </span>
                       {a.isOvertime && (
                         <span className="ml-1.5 text-xs text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded-full">OT {a.overtimeMinutes}m</span>
@@ -159,6 +164,7 @@ export default function TeamPage() {
                         <span className={cn('badge w-fit', getStatusBadgeColor(a.status))}>
                           {getStatusLabel(a.status)}
                         </span>
+                        {a.checkIn && <span className="text-xs text-sky-700">{sessionStatus(a)}</span>}
                         {a.isOutOfRadius && (
                           <span className="badge w-fit bg-orange-50 text-orange-600 border-orange-200 text-xs">
                             <MapPin size={10} /> Luar Radius

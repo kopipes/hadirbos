@@ -25,6 +25,9 @@ export async function middleware(req: NextRequest) {
   );
   if (isPublic) return NextResponse.next();
 
+  // These jobs authenticate with CRON_SECRET in their handlers, not a browser cookie.
+  if (['/api/cron/auto-checkout', '/api/cron/checkout-reminder'].includes(pathname)) return NextResponse.next();
+
   // Require auth token
   const token = req.cookies.get('hadirbos_token')?.value;
   if (!token) {

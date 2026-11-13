@@ -1,3 +1,4 @@
+import { scheduleValidationError } from '@/lib/schedule-validation';
 import { NextRequest } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getAuthUser, ok, unauthorized, forbidden, badRequest, serverError } from '@/lib/api';
@@ -9,18 +10,22 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
 
   try {
     const body = await req.json();
-    const { name, checkInTime, checkOutTime, gracePeriod, overtimeAfter, workDays, officeId, isActive } = body;
+    const { name, checkInTime, checkOutTime, gracePeriod, overtimeAfter, checkOutNextDay, reviewAfter, workDays, officeId, isActive } = body;
 
     if (!name || !checkInTime || !checkOutTime) {
       return badRequest('Nama, jam masuk, dan jam pulang wajib diisi.');
     }
 
+    const validationError = scheduleValidationError(body);
+    if (validationError) return badRequest(validationError);
     const schedule = await prisma.workSchedule.update({
       where: { id: params.id },
       data: {
         name,
         checkInTime,
         checkOutTime,
+        checkOutNextDay: checkOutNextDay ?? false,
+        reviewAfter: reviewAfter ?? 180,
         gracePeriod: gracePeriod ?? 15,
         overtimeAfter: overtimeAfter ?? 30,
         workDays: workDays || '1,2,3,4,5',

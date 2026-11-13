@@ -9,13 +9,13 @@ import type { WorkSchedule } from '@/types';
 interface ScheduleForm {
   name: string; checkInTime: string; checkOutTime: string;
   gracePeriod: string; overtimeAfter: string; workDays: string;
-  officeId: string; isActive: boolean;
+  officeId: string; isActive: boolean; checkOutNextDay: boolean; reviewAfter: string;
 }
 
 const emptyForm: ScheduleForm = {
   name: '', checkInTime: '08:00', checkOutTime: '17:00',
   gracePeriod: '15', overtimeAfter: '30', workDays: '1,2,3,4,5',
-  officeId: '', isActive: true,
+  officeId: '', isActive: true, checkOutNextDay: false, reviewAfter: '180',
 };
 
 const dayNames = ['', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu'];
@@ -56,6 +56,8 @@ export default function AdminWorkHoursPage() {
       workDays: s.workDays,
       officeId: s.officeId || '',
       isActive: s.isActive,
+      checkOutNextDay: s.checkOutNextDay,
+      reviewAfter: String(s.reviewAfter),
     });
     setShowModal(true);
   }
@@ -79,8 +81,9 @@ export default function AdminWorkHoursPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ...form,
-        gracePeriod: parseInt(form.gracePeriod) || 15,
-        overtimeAfter: parseInt(form.overtimeAfter) || 30,
+        gracePeriod: form.gracePeriod === '' ? 15 : Number(form.gracePeriod),
+        overtimeAfter: form.overtimeAfter === '' ? 30 : Number(form.overtimeAfter),
+        reviewAfter: Number(form.reviewAfter),
         officeId: form.officeId || null,
       }),
     });
@@ -142,7 +145,7 @@ export default function AdminWorkHoursPage() {
                     </div>
                     <div className="flex gap-4 mt-1.5 text-sm text-slate-600 flex-wrap">
                       <span>Masuk: <strong>{s.checkInTime}</strong></span>
-                      <span>Pulang: <strong>{s.checkOutTime}</strong></span>
+                      <span>Pulang: <strong>{s.checkOutTime}{s.checkOutNextDay ? ' (+1 hari)' : ''}</strong></span>
                       <span>Toleransi: <strong>{s.gracePeriod} mnt</strong></span>
                       <span>Lembur setelah: <strong>{s.overtimeAfter} mnt</strong></span>
                     </div>
@@ -198,6 +201,15 @@ export default function AdminWorkHoursPage() {
                   <input className="input" type="time" value={form.checkOutTime} onChange={e => setForm(f => ({ ...f, checkOutTime: e.target.value }))} />
                 </div>
               </div>
+              <label className="flex items-center gap-2 text-sm text-slate-700">
+                <input type="checkbox" checked={form.checkOutNextDay} onChange={e => setForm(f => ({ ...f, checkOutNextDay: e.target.checked }))} />
+                Jam pulang pada hari berikutnya (shift malam)
+              </label>
+              <div>
+                <label className="label">Tandai perlu ditinjau setelah lewat jadwal pulang (menit)</label>
+                <input className="input" type="number" min="30" max="1440" value={form.reviewAfter} onChange={e => setForm(f => ({ ...f, reviewAfter: e.target.value }))} />
+                <p className="text-xs text-slate-500 mt-1">Jam pulang tidak diisi otomatis. Pengingat pertama dikirim setelah 30 menit.</p>
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="label">Toleransi Terlambat (mnt)</label>
@@ -209,7 +221,7 @@ export default function AdminWorkHoursPage() {
                 </div>
               </div>
               <div>
-                <label className="label">Hari Kerja</label>
+                <label className="label">Hari Kerja (tanggal mulai shift)</label>
                 <div className="flex gap-2 flex-wrap">
                   {[1,2,3,4,5,6,7].map((d) => {
                     const active = form.workDays.split(',').includes(d.toString());
